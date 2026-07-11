@@ -9,6 +9,7 @@ from .schemas import (
     BarrageResponse,
     CommandRequest,
     CommandResponse,
+    CourseKeyframeRequest,
     CourseResponse,
     CourseStartRequest,
     EventMessage,
@@ -104,6 +105,25 @@ async def course_finish(session_id: str, request: Request) -> CourseResponse:
         state = await service(request).finish_course(session_id)
     except FileNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "course not found") from exc
+    return course_response(state)
+
+
+@router.post("/courses/{session_id}/keyframes", response_model=CourseResponse)
+async def course_keyframe(
+    session_id: str, body: CourseKeyframeRequest, request: Request
+) -> CourseResponse:
+    try:
+        state = await service(request).add_course_keyframe(
+            session_id,
+            body.image_base64,
+            body.timestamp_ms,
+            body.extension,
+            body.metadata,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "course not found") from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     return course_response(state)
 
 

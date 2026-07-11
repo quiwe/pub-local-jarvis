@@ -27,9 +27,16 @@ exit_samples = 4
 max_age_seconds = 8.0
 max_queue_size = 256
 
+[interaction]
+ordinary_bubble_cooldown_seconds = 60.0
+game_barrage_repeat_seconds = 12.0
+game_barrage_output_ratio = 0.667
+
 [memory]
 root = "memory"
 
 [courses]
 sessions_root = "courses/sessions"
+keyframe_min_interval_seconds = 30
+max_keyframes = 40
 # Leave output_root unset to export through the Windows Known Folder Desktop path.

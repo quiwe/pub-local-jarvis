@@ -1,0 +1,7 @@
+* { box-sizing: border-box; }
+html, body { width: 256px; height: 256px; margin: 0; overflow: hidden; }
+body { display: grid; place-items: center; background: #102b2e; }
+.ring { position: relative; width: 172px; height: 172px; display: grid; place-items: center; border: 9px solid #62dfcf; border-radius: 50%; background: #183a3e; }
+.ring::before { content: ""; position: absolute; inset: 14px; border: 2px solid #527276; border-radius: 50%; }
+.ring span { position: relative; z-index: 1; color: #f4faf8; font: 700 112px/1 "Segoe UI", sans-serif; transform: translateY(-5px); }
+.ring i { position: absolute; bottom: -14px; width: 54px; height: 9px; border-radius: 5px; background: #e0a13a; }

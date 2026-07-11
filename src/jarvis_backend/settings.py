@@ -44,6 +44,12 @@ class BarrageSettings(BaseModel):
     max_queue_size: int = Field(default=256, ge=1)
 
 
+class InteractionSettings(BaseModel):
+    ordinary_bubble_cooldown_seconds: float = Field(default=60.0, ge=0)
+    game_barrage_repeat_seconds: float = Field(default=12.0, ge=0)
+    game_barrage_output_ratio: float = Field(default=2 / 3, gt=0, le=1)
+
+
 class MemorySettings(BaseModel):
     root: Path = Path("memory")
 
@@ -51,6 +57,8 @@ class MemorySettings(BaseModel):
 class CourseSettings(BaseModel):
     sessions_root: Path = Path("courses/sessions")
     output_root: Path | None = None
+    keyframe_min_interval_seconds: float = Field(default=30.0, ge=0)
+    max_keyframes: int = Field(default=40, ge=1, le=200)
 
 
 class Settings(BaseModel):
@@ -61,6 +69,7 @@ class Settings(BaseModel):
     native: NativeSettings = Field(default_factory=NativeSettings)
     scene: SceneSettings = Field(default_factory=SceneSettings)
     barrage: BarrageSettings = Field(default_factory=BarrageSettings)
+    interaction: InteractionSettings = Field(default_factory=InteractionSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     courses: CourseSettings = Field(default_factory=CourseSettings)
 

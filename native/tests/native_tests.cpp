@@ -68,7 +68,10 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
   bool received_perception() {
     std::lock_guard lock(mutex_);
     for (const auto& [id, prompt] : prompts_) {
-      if (id >= (std::uint64_t{1} << 63U) && prompt.find("course_note") != std::string::npos) {
+      if (id >= (std::uint64_t{1} << 63U) &&
+          prompt.find("course_note") != std::string::npos &&
+          prompt.find("Do not merely narrate") != std::string::npos &&
+          prompt.find("useful tactical hint") != std::string::npos) {
         return true;
       }
     }

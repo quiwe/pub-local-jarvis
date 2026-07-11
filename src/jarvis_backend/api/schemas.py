@@ -68,6 +68,13 @@ class CourseStartRequest(BaseModel):
     session_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]+$")
 
 
+class CourseKeyframeRequest(BaseModel):
+    image_base64: str = Field(min_length=1, max_length=6_000_000)
+    timestamp_ms: int = Field(ge=0)
+    extension: Literal["png", "jpg", "jpeg", "webp"] = "png"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class CourseResponse(BaseModel):
     id: str
     title: str

@@ -1,9 +1,10 @@
 # AI Jarvis Backend
 
-Windows 本地优先的 AI 贾维斯后端 MVP。项目由两个进程组成：
+Windows 本地优先的 AI 贾维斯应用。核心能力由后端提供，Electron 桌面端只负责启动、系统集成和结果展示：
 
 - **Python/FastAPI 控制面**：状态、场景滞回、弹幕策略、纯文件记忆、课程会话和 UI API。
 - **C++20 原生 worker**：DXGI 屏幕捕获、WASAPI 系统回放捕获、2 秒媒体窗口、任务调度和 MiniCPM-o 运行时接口。
+- **Electron 桌面端**：一键启动、透明桌宠、聊天气泡、游戏弹幕、托盘和课程关键帧回传。
 
 ## 当前完成度
 
@@ -16,6 +17,8 @@ Windows 本地优先的 AI 贾维斯后端 MVP。项目由两个进程组成：
 - 16 kHz 单声道重采样、精确 2 秒音频窗口、画面指纹和 latest-only 调度。
 - 纯文件 JSONL 记忆、BM25 风格检索、摘要/事实文件和保留/清理。
 - 课程会话、转写、关键帧、可恢复 Markdown 输出及 Windows Known Folder Desktop 定位。
+- 普通场景按需气泡提醒、游戏场景桌宠隐藏与点击穿透弹幕层。
+- 网课自动开始/结束记录，并导出 `README.md` 和 `images/` 到桌面的独立课程文件夹。
 - 独立、固定提交且 SHA-256 验证的第三方运行时源码快照，以及 MiniCPM-o 模型布局校验。
 
 生产 worker 已链接固定版本的 llama.cpp-omni provider。它加载 LLM/VPM/APM 并返回文本；TTS、projector 和 Token2Wav 权重不会加载。`JARVIS_ENABLE_STUB_RUNTIME=ON` 仅用于开发和 native 单元测试，一键真实启动器始终显式关闭该选项。
@@ -50,6 +53,34 @@ jarvis-backend
 启动器只允许 `native.mode = "process"` 和 `JARVIS_ENABLE_STUB_RUNTIME=OFF`。源码门禁通过后，它会检查并安装 Python、CMake、Visual Studio C++ Build Tools 和 CUDA，创建 `.venv`，按固定 revision 下载并校验 MiniCPM-o 的 LLM/VPM/APM GGUF，构建 native worker，再依次启动 worker 与 FastAPI。可选参数包括 `-SkipInstall`、`-SkipModelDownload`、`-CpuOnly` 和 `-Rebuild`。
 
 启动前会验证 `omni_text_runtime` 补丁、真实 `IOmniRuntime` adapter 和 native 链接；任何一项缺失都会在安装或下载前失败，绝不会回退到 fake/stub。
+
+## 桌面应用
+
+首次开发运行：
+
+```powershell
+cd desktop
+npm install
+npm start
+```
+
+打开应用后点击“启动 AI 贾维斯”。若 `127.0.0.1:8000` 已有健康后端，桌面端会直接连接；否则会调用 `start-real.ps1 -NoBrowser -SkipSmokeTest` 完成真实环境准备并启动后端。启动成功后控制面板自动收起，应用驻留托盘。
+
+桌面端只消费 `/ws/events` 的后端事件：
+
+- `assistant.message` 显示普通场景气泡；
+- `barrage.generated` 在游戏场景显示弹幕；
+- `course.keyframe.requested` 触发一次缩放后的屏幕截图并回传课程接口；
+- `course.finished` 显示课程总结已生成，并可打开输出位置。
+
+构建 Windows 安装包：
+
+```powershell
+cd desktop
+npm run build
+```
+
+安装包不携带模型权重。首次真实启动仍由后端启动器按既有校验流程准备模型与原生运行时。
 
 主要 API 前缀为 `/api/v1`，包括健康、命令、场景、弹幕、记忆和课程接口。事件 WebSocket 为 `/ws/events`。
 
@@ -95,7 +126,7 @@ MVP 是文本输出，不需要 TTS、projector、Token2Wav 或参考音色文�
 - 普通运行不应持久化原始屏幕和音频。
 - 记忆默认写到 `memory/`，课程工作文件写到 `courses/sessions/`，二者均被 `.gitignore` 排除。
 - 课程关键帧只有被课程流程选中时才写盘。
-- 未配置课程输出目录时，最终工件写到 Windows Known Folder Desktop 下的 `Jarvis-Courses/`。
+- 未配置课程输出目录时，最终工件写到 Windows Known Folder Desktop 下的 `Jarvis-Courses/<session-id>/`，其中包含 `README.md` 和 `images/`。
 - 暂停监控会停止采集线程并清空 worker 持有的采集对象。
 
 ## 第三方和模型许可

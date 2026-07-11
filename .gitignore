@@ -20,6 +20,8 @@ htmlcov/
 # Build artifacts
 build/
 dist/
+node_modules/
+desktop/qa-output/
 *.egg-info/
 
 # Local AI Jarvis runtime data and secrets

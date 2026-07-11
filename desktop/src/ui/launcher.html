@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; script-src 'self' file:; style-src 'self'; img-src 'self' data: file:">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Jarvis</title>
+  <link rel="stylesheet" href="launcher.css">
+</head>
+<body>
+  <main class="control-shell">
+    <header class="brand-bar">
+      <div class="brand-mark" aria-hidden="true"><span>J</span></div>
+      <div>
+        <p class="eyebrow">LOCAL DESKTOP INTELLIGENCE</p>
+        <h1>AI 贾维斯</h1>
+      </div>
+      <span id="phase-chip" class="phase-chip">待启动</span>
+    </header>
+
+    <section class="status-band" aria-live="polite">
+      <div class="pulse-orbit" aria-hidden="true">
+        <span></span><i></i>
+      </div>
+      <div>
+        <p id="status-title" class="status-title">系统处于待命状态</p>
+        <p id="status-detail" class="status-detail">启动后将连接本地模型并持续理解屏幕与系统声音。</p>
+      </div>
+    </section>
+
+    <section class="system-list" aria-label="运行能力">
+      <div class="system-row">
+        <span class="row-icon"><i data-lucide="scan-line"></i></span>
+        <div><strong>持续感知</strong><small>屏幕与系统音频仅在本机处理</small></div>
+        <span id="monitor-value" class="row-value">未运行</span>
+      </div>
+      <div class="system-row">
+        <span class="row-icon amber"><i data-lucide="gamepad-2"></i></span>
+        <div><strong>场景交互</strong><small>桌宠气泡与游戏弹幕自动切换</small></div>
+        <span id="scene-value" class="row-value">其他</span>
+      </div>
+      <div class="system-row">
+        <span class="row-icon red"><i data-lucide="graduation-cap"></i></span>
+        <div><strong>课程记录</strong><small>关键文本与截图导出到桌面</small></div>
+        <span class="row-value">自动</span>
+      </div>
+    </section>
+
+    <section class="activity-section">
+      <div class="section-head">
+        <h2>启动日志</h2>
+        <span class="privacy"><i data-lucide="shield-check"></i> 本地优先</span>
+      </div>
+      <div id="activity-log" class="activity-log" role="log">
+        <p><time>--:--</time><span>等待启动 AI 贾维斯</span></p>
+      </div>
+    </section>
+
+    <footer class="command-bar">
+      <button id="start-button" class="primary-command" type="button">
+        <i data-lucide="power"></i><span>启动 AI 贾维斯</span>
+      </button>
+      <button id="pause-button" class="secondary-command" type="button" hidden>
+        <i data-lucide="pause"></i><span>暂停感知</span>
+      </button>
+      <button id="console-button" class="icon-command" type="button" title="打开后端控制台" aria-label="打开后端控制台">
+        <i data-lucide="panel-top-open"></i>
+      </button>
+    </footer>
+  </main>
+  <script src="../../node_modules/lucide/dist/umd/lucide.js"></script>
+  <script src="launcher.js"></script>
+</body>
+</html>

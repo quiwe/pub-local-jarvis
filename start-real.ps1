@@ -6,6 +6,8 @@ param(
     [switch]$SkipModelDownload,
     [switch]$CpuOnly,
     [switch]$Rebuild,
+    [switch]$NoBrowser,
+    [switch]$SkipSmokeTest,
     [string]$HfToken = $env:HF_TOKEN
 )
 
@@ -127,6 +129,8 @@ function Restart-LauncherElevated {
     if ($SkipModelDownload) { $forwardedSwitches += "-SkipModelDownload" }
     if ($CpuOnly) { $forwardedSwitches += "-CpuOnly" }
     if ($Rebuild) { $forwardedSwitches += "-Rebuild" }
+    if ($NoBrowser) { $forwardedSwitches += "-NoBrowser" }
+    if ($SkipSmokeTest) { $forwardedSwitches += "-SkipSmokeTest" }
 
     # The elevated process inherits HF_TOKEN. Avoid putting the token on its command line.
     if ($HfToken) {
@@ -1034,12 +1038,18 @@ function Start-Jarvis {
         }
 
         $apiRoot = "http://127.0.0.1:8000/api/v1"
-        Assert-RealInferenceSmokeTest -ApiRoot $apiRoot
+        if (-not $SkipSmokeTest) {
+            Assert-RealInferenceSmokeTest -ApiRoot $apiRoot
+        }
 
         Write-Host "`nAI Jarvis is running in real process mode: $healthUri" -ForegroundColor Green
-        Write-Host "Opening the Jarvis console: http://127.0.0.1:8000/" -ForegroundColor Green
+        if (-not $NoBrowser) {
+            Write-Host "Opening the Jarvis console: http://127.0.0.1:8000/" -ForegroundColor Green
+        }
         Write-Host "Press Ctrl+C to stop both processes." -ForegroundColor Green
-        Start-Process "http://127.0.0.1:8000/"
+        if (-not $NoBrowser) {
+            Start-Process "http://127.0.0.1:8000/"
+        }
         $healthFailures = 0
         while (-not $backendProcess.HasExited -and -not $workerProcess.HasExited) {
             Start-Sleep -Seconds 2

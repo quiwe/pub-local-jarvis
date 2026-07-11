@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <stop_token>
@@ -43,6 +44,7 @@ class Worker {
   std::jthread capture_thread_{};
   std::shared_ptr<const VideoFrame> latest_frame_{};
   std::shared_ptr<const std::vector<float>> latest_audio_{};
+  std::deque<std::string> recent_perceptions_{};
   std::atomic_uint64_t observation_id_{std::uint64_t{1} << 63U};
 #endif
   mutable std::mutex mutex_{};

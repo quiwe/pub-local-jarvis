@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import json
+import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -42,6 +45,11 @@ class OrchestrationService:
         self._non_course_streak = 0
         self._last_course_note = ""
         self._last_barrage = ""
+        self._last_barrage_at = float("-inf")
+        self._barrage_emit_credit = 1.0 - settings.interaction.game_barrage_output_ratio
+        self._last_assistant_message = ""
+        self._last_assistant_message_at = float("-inf")
+        self._last_keyframe_requested_at: dict[str, float] = {}
 
     async def start(self) -> None:
         await self.lifecycle.transition(LifecycleState.STARTING)
@@ -123,6 +131,45 @@ class OrchestrationService:
         await self.events.publish(Event("course.finished", state.as_dict()))
         return state
 
+    async def add_course_keyframe(
+        self,
+        session_id: str,
+        image_base64: str,
+        timestamp_ms: int,
+        extension: str,
+        metadata: dict[str, Any],
+    ) -> CourseState:
+        try:
+            frame = base64.b64decode(image_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("keyframe is not valid base64") from exc
+        if not frame or len(frame) > 4 * 1024 * 1024:
+            raise ValueError("keyframe must be between 1 byte and 4 MiB")
+        normalized = extension.casefold()
+        signatures = {
+            "png": frame.startswith(b"\x89PNG\r\n\x1a\n"),
+            "jpg": frame.startswith(b"\xff\xd8\xff"),
+            "jpeg": frame.startswith(b"\xff\xd8\xff"),
+            "webp": frame.startswith(b"RIFF") and frame[8:12] == b"WEBP",
+        }
+        if not signatures.get(normalized, False):
+            raise ValueError(f"keyframe bytes do not match .{normalized}")
+        session = self.courses.open(session_id)
+        session.add_keyframe(
+            frame,
+            timestamp_ms=timestamp_ms,
+            extension=normalized,
+            metadata=metadata,
+        )
+        state = session.state
+        await self.events.publish(
+            Event(
+                "course.keyframe.recorded",
+                {"id": session_id, "timestamp_ms": timestamp_ms, "count": len(state.keyframes)},
+            )
+        )
+        return state
+
     async def get_course(self, session_id: str) -> CourseState:
         return self.courses.open(session_id).state
 
@@ -151,12 +198,19 @@ class OrchestrationService:
             confidence = max(0.0, min(1.0, float(value.get("confidence", 0.0))))
         except (TypeError, ValueError):
             confidence = 0.0
+        barrage = str(value.get("barrage", "")).strip()
+        course_note = str(value.get("course_note", "")).strip()
+        assistant_message = str(value.get("assistant_message", "")).strip()
+        if scene == "game" and not barrage:
+            barrage = assistant_message or course_note
         return {
             "scene": scene,
             "confidence": confidence,
-            "barrage": str(value.get("barrage", "")).strip()[:120],
-            "course_note": str(value.get("course_note", "")).strip()[:2000],
+            "barrage": barrage[:30] if scene == "game" else barrage[:120],
+            "course_note": course_note[:2000],
             "course_title": str(value.get("course_title", "")).strip()[:128],
+            "capture_keyframe": value.get("capture_keyframe") is True,
+            "assistant_message": assistant_message[:500],
         }
 
     async def _handle_perception(self, payload: dict[str, Any]) -> None:
@@ -173,14 +227,42 @@ class OrchestrationService:
 
         await self.events.publish(Event("perception.completed", result))
         scene = result["scene"]
-        if scene == "game" and result["barrage"] and result["barrage"] != self._last_barrage:
+        now = time.monotonic()
+        barrage_can_repeat = (
+            now - self._last_barrage_at
+            >= self.settings.interaction.game_barrage_repeat_seconds
+        )
+        barrage_candidate = scene == "game" and result["barrage"] and (
+            result["barrage"] != self._last_barrage or barrage_can_repeat
+        )
+        if barrage_candidate:
+            self._barrage_emit_credit += self.settings.interaction.game_barrage_output_ratio
+        if barrage_candidate and self._barrage_emit_credit >= 1.0:
+            self._barrage_emit_credit -= 1.0
             self._last_barrage = result["barrage"]
+            self._last_barrage_at = now
             await self.events.publish(
                 Event(
                     "barrage.generated",
                     {"text": result["barrage"], "confidence": result["confidence"]},
                 )
             )
+
+        if scene == "other" and result["assistant_message"]:
+            message = str(result["assistant_message"])
+            cooldown_elapsed = (
+                now - self._last_assistant_message_at
+                >= self.settings.interaction.ordinary_bubble_cooldown_seconds
+            )
+            if message != self._last_assistant_message and cooldown_elapsed:
+                self._last_assistant_message = message
+                self._last_assistant_message_at = now
+                await self.events.publish(
+                    Event(
+                        "assistant.message",
+                        {"text": message, "confidence": result["confidence"]},
+                    )
+                )
 
         if scene == "course":
             self._non_course_streak = 0
@@ -219,6 +301,29 @@ class OrchestrationService:
         self._last_course_note = note
         await self.events.publish(
             Event("course.note.recorded", {"id": state.id, "note": note, "summary": state.summary})
+        )
+        if result["capture_keyframe"] or (
+            not state.keyframes and state.id not in self._last_keyframe_requested_at
+        ):
+            await self._request_course_keyframe(state)
+
+    async def _request_course_keyframe(self, state: CourseState) -> None:
+        if len(state.keyframes) >= self.settings.courses.max_keyframes:
+            return
+        now = time.monotonic()
+        previous = self._last_keyframe_requested_at.get(state.id)
+        if previous is not None and (
+            now - previous < self.settings.courses.keyframe_min_interval_seconds
+        ):
+            return
+        self._last_keyframe_requested_at[state.id] = now
+        created_at = datetime.fromisoformat(state.created_at.replace("Z", "+00:00"))
+        timestamp_ms = max(0, int((datetime.now(UTC) - created_at).total_seconds() * 1000))
+        await self.events.publish(
+            Event(
+                "course.keyframe.requested",
+                {"id": state.id, "timestamp_ms": timestamp_ms, "note": self._last_course_note},
+            )
         )
 
     async def _finish_auto_course(self) -> None:

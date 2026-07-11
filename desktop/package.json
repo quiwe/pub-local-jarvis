@@ -1,0 +1,71 @@
+{
+  "name": "aijarvis-desktop",
+  "version": "0.1.0",
+  "description": "Thin Electron desktop companion for the AI Jarvis backend",
+  "author": "AI Jarvis Contributors",
+  "main": "src/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "test:visual": "electron test/visual-smoke.js",
+    "assets:generate": "electron test/generate-assets.js",
+    "build": "electron-builder --win nsis:x64"
+  },
+  "dependencies": {
+    "lucide": "^0.468.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^41.10.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.aijarvis.desktop",
+    "productName": "AI Jarvis",
+    "artifactName": "AI-Jarvis-Setup-${version}-${arch}.${ext}",
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../start-real.ps1",
+        "to": "backend/start-real.ps1"
+      },
+      {
+        "from": "../pyproject.toml",
+        "to": "backend/pyproject.toml"
+      },
+      {
+        "from": "../CMakeLists.txt",
+        "to": "backend/CMakeLists.txt"
+      },
+      {
+        "from": "../config",
+        "to": "backend/config"
+      },
+      {
+        "from": "../src",
+        "to": "backend/src"
+      },
+      {
+        "from": "../native",
+        "to": "backend/native"
+      },
+      {
+        "from": "../third_party/runtime",
+        "to": "backend/third_party/runtime"
+      }
+    ],
+    "win": {
+      "icon": "assets/icon.png",
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

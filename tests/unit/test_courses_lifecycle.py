@@ -16,7 +16,8 @@ def test_course_lifecycle_exact_frames_and_markdown(tmp_path):
     assert "# Python Lesson" in rendered
     assert "Install Python." in rendered
     assert "1.234s" in rendered
-    assert (output.parent / f"{output.stem}_assets" / item["filename"]).read_bytes() == frame
+    assert output == tmp_path / "courses" / "lesson-1" / "README.md"
+    assert (output.parent / "images" / item["filename"]).read_bytes() == frame
     assert repository.open("lesson-1").state.status == CourseStatus.COMPLETE
     assert session.finalize(tmp_path / "courses") == output
 
