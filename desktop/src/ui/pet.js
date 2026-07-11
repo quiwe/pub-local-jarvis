@@ -7,8 +7,22 @@ const bubbleAction = document.querySelector("#bubble-action");
 let outputPath = null;
 let pointerInteractive = false;
 
+pet.addEventListener("dblclick", async event => {
+  event.preventDefault();
+  try {
+    await window.jarvis.toggleScreenPrivacy();
+  } catch (_) {
+    // The main window reports backend command failures through its normal status path.
+  }
+});
+
 window.jarvis.onPetScene(scene => {
   pet.dataset.scene = scene || "other";
+});
+
+window.jarvis.onScreenPrivacy(enabled => {
+  pet.dataset.screenBlocked = enabled ? "true" : "false";
+  pet.setAttribute("aria-label", enabled ? "AI 贾维斯，画面已屏蔽" : "AI 贾维斯桌宠");
 });
 
 window.jarvis.onBubble(message => {

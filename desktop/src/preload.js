@@ -16,10 +16,12 @@ contextBridge.exposeInMainWorld("jarvis", {
   openConsole: () => ipcRenderer.invoke("jarvis:open-console"),
   openOutput: outputPath => ipcRenderer.invoke("jarvis:open-output", outputPath),
   getState: () => ipcRenderer.invoke("jarvis:get-state"),
+  toggleScreenPrivacy: () => ipcRenderer.invoke("jarvis:toggle-screen-privacy"),
   reportPetPointer: interactive => ipcRenderer.send("jarvis:pet-pointer", !!interactive),
   onState: subscribe("jarvis:state"),
   onProgress: subscribe("jarvis:progress"),
   onPetScene: subscribe("jarvis:pet-scene"),
+  onScreenPrivacy: subscribe("jarvis:screen-privacy"),
   onBubble: subscribe("jarvis:bubble"),
   onBarrage: subscribe("jarvis:barrage"),
 });

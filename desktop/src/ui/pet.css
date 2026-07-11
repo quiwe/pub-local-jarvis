@@ -73,6 +73,8 @@ html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background:
   background: #e9f0ee;
   overflow: hidden;
   z-index: 4;
+  -webkit-app-region: no-drag;
+  cursor: pointer;
 }
 .head::before { content: ""; position: absolute; inset: 6px; border: 1px solid #9dafac; border-radius: 20px; }
 .antenna { position: absolute; top: 4px; left: 69px; width: 5px; height: 32px; border-radius: 3px; background: #163236; transform: rotate(7deg); z-index: 1; }
@@ -83,6 +85,19 @@ html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background:
 .eye { position: absolute; top: 31px; width: 24px; height: 13px; border-radius: 7px; background: #19363a; }
 .eye.left { left: 20px; }.eye.right { right: 20px; }
 .eye i { position: absolute; top: 3px; left: 8px; width: 8px; height: 7px; border-radius: 4px; background: #5ce7d4; animation: scan 3s ease-in-out infinite; }
+.pet[data-screen-blocked="true"] .eye { background: transparent; }
+.pet[data-screen-blocked="true"] .eye i {
+  inset: -5px 0 auto 0;
+  width: auto;
+  height: auto;
+  color: #c95145;
+  background: transparent;
+  font: 900 17px/1 "Segoe UI", sans-serif;
+  text-align: center;
+  animation: none;
+}
+.pet[data-screen-blocked="true"] .eye i::before { content: "X"; }
+.pet[data-screen-blocked="true"] .core-ring { background: #d7dedc; }
 @keyframes scan { 0%, 100% { transform: translateX(-4px); } 50% { transform: translateX(4px); } }
 .brow { position: absolute; top: 22px; width: 22px; height: 3px; border-radius: 2px; background: #71827f; }
 .brow.left { left: 20px; }.brow.right { right: 20px; }

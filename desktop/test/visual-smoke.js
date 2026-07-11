@@ -35,6 +35,9 @@ app.whenReady().then(async () => {
     error: null,
   }));
   ipcMain.handle("jarvis:open-output", () => null);
+  ipcMain.handle("jarvis:toggle-screen-privacy", () => ({
+    phase: "running", monitoring: true, screenBlocked: true,
+  }));
 
   await capture("launcher", { width: 520, height: 690, useContentSize: true }, "launcher.html");
   await capture(
@@ -43,6 +46,7 @@ app.whenReady().then(async () => {
     "pet.html",
     async window => {
       window.webContents.send("jarvis:pet-scene", "course");
+      window.webContents.send("jarvis:screen-privacy", true);
       window.webContents.send("jarvis:bubble", {
         text: "课程总结已经生成，已保存到桌面。",
         tone: "success",

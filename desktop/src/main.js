@@ -15,6 +15,7 @@ const {
 const { BackendManager, StartCancelledError } = require("./backend-manager");
 const { routeBackendEvent } = require("./event-router");
 const { isPetPointerInteractive } = require("./pet-hit-test");
+const { randomPrivacyDelay, randomPrivacyMessage } = require("./privacy-mode");
 
 app.setName("AI Jarvis");
 app.commandLine.appendSwitch("disable-background-timer-throttling");
@@ -26,8 +27,10 @@ let tray = null;
 let manager = null;
 let startPromise = null;
 let startController = null;
+let privacyTogglePromise = null;
 let quitting = false;
 let bubbleTimer = null;
+let privacyMessageTimer = null;
 let petHitTestTimer = null;
 let petMouseInteractive = false;
 let petBubbleVisible = false;
@@ -37,6 +40,7 @@ const state = {
   monitoring: false,
   scene: "other",
   error: null,
+  screenBlocked: false,
 };
 
 function backendRoot() {
@@ -190,6 +194,11 @@ function setScene(sceneValue) {
   publishState({ scene });
   send(petWindow, "jarvis:pet-scene", scene);
   if (!state.monitoring) return;
+  if (state.screenBlocked) {
+    barrageWindow.hide();
+    petWindow.showInactive();
+    return;
+  }
   if (scene === "game") {
     if (petWindow.isVisible()) petWindow.hide();
     barrageWindow.showInactive();
@@ -215,7 +224,7 @@ function showBubble(effect) {
 }
 
 async function captureKeyframe(effect) {
-  if (!effect.id || pendingCaptures.has(effect.id)) return;
+  if (state.screenBlocked || !effect.id || pendingCaptures.has(effect.id)) return;
   pendingCaptures.add(effect.id);
   try {
     const display = screen.getPrimaryDisplay();
@@ -242,11 +251,49 @@ async function captureKeyframe(effect) {
   }
 }
 
+function schedulePrivacyMessage() {
+  clearTimeout(privacyMessageTimer);
+  if (!state.screenBlocked) return;
+  privacyMessageTimer = setTimeout(() => {
+    if (!state.screenBlocked) return;
+    showBubble({ text: randomPrivacyMessage(), tone: "privacy", duration: 8000 });
+    schedulePrivacyMessage();
+  }, randomPrivacyDelay());
+}
+
+async function toggleScreenPrivacy() {
+  if (privacyTogglePromise) return privacyTogglePromise;
+  if (state.phase !== "running") return { ...state };
+  privacyTogglePromise = (async () => {
+    const screenBlocked = !state.screenBlocked;
+    await manager.command(screenBlocked ? "pause_monitoring" : "resume_monitoring");
+    publishState({ screenBlocked });
+    send(petWindow, "jarvis:screen-privacy", screenBlocked);
+    barrageWindow.hide();
+    petWindow.showInactive();
+    if (screenBlocked) {
+      showBubble({ text: "画面已屏蔽。好吧，我现在什么都看不见了。", tone: "privacy", duration: 7000 });
+      schedulePrivacyMessage();
+    } else {
+      clearTimeout(privacyMessageTimer);
+      setScene(state.scene);
+      showBubble({ text: "画面恢复，我又能看见了。", tone: "success", duration: 5000 });
+    }
+    return { ...state };
+  })();
+  try {
+    return await privacyTogglePromise;
+  } finally {
+    privacyTogglePromise = null;
+  }
+}
+
 function handleBackendEvent(event) {
   for (const effect of routeBackendEvent(event)) {
     if (effect.type === "scene") setScene(effect.scene);
-    if (effect.type === "bubble") showBubble(effect);
+    if (effect.type === "bubble" && !state.screenBlocked) showBubble(effect);
     if (effect.type === "barrage") {
+      if (state.screenBlocked) continue;
       barrageWindow.showInactive();
       send(barrageWindow, "jarvis:barrage", effect.text);
     }
@@ -267,7 +314,7 @@ async function startJarvis() {
     try {
       await manager.start({ signal: startController.signal });
       await manager.command("start_monitoring");
-      publishState({ phase: "running", monitoring: true, error: null });
+      publishState({ phase: "running", monitoring: true, screenBlocked: false, error: null });
       setScene("other");
       showBubble({ text: "AI 贾维斯已启动，正在持续理解当前画面。", tone: "success" });
       setTimeout(() => launcherWindow.hide(), 900);
@@ -301,9 +348,11 @@ async function cancelStart() {
 async function pauseMonitoring() {
   if (!state.monitoring) return { ...state };
   await manager.command("pause_monitoring");
+  clearTimeout(privacyMessageTimer);
+  send(petWindow, "jarvis:screen-privacy", false);
   barrageWindow.hide();
   petWindow.hide();
-  publishState({ phase: "paused", monitoring: false });
+  publishState({ phase: "paused", monitoring: false, screenBlocked: false });
   return { ...state };
 }
 
@@ -334,6 +383,10 @@ function registerIpc() {
   ipcMain.handle("jarvis:resume", resumeMonitoring);
   ipcMain.handle("jarvis:open-console", openConsole);
   ipcMain.handle("jarvis:get-state", () => ({ ...state }));
+  ipcMain.handle("jarvis:toggle-screen-privacy", event => {
+    if (!petWindow || event.sender !== petWindow.webContents) return { ...state };
+    return toggleScreenPrivacy();
+  });
   ipcMain.handle("jarvis:open-output", async (_event, outputPath) => {
     if (typeof outputPath === "string" && outputPath) shell.showItemInFolder(outputPath);
   });
@@ -363,6 +416,7 @@ app.on("before-quit", event => {
   event.preventDefault();
   quitting = true;
   clearInterval(petHitTestTimer);
+  clearTimeout(privacyMessageTimer);
   Promise.resolve(manager && manager.stop()).finally(() => {
     if (tray) tray.destroy();
     for (const window of BrowserWindow.getAllWindows()) window.destroy();
