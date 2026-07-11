@@ -22,6 +22,7 @@ class Worker {
   bool start(const std::string& model_path);
   void stop() noexcept;
   void submit(ScheduledRequest request);
+  void submit_prompt(std::uint64_t request_id, std::string prompt);
   void cancel(std::uint64_t request_id) noexcept;
 #ifdef _WIN32
   bool start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
@@ -40,7 +41,9 @@ class Worker {
   std::unique_ptr<IDesktopCapture> desktop_{};
   std::unique_ptr<IAudioCapture> audio_{};
   std::jthread capture_thread_{};
-  std::atomic_uint64_t observation_id_{1};
+  std::shared_ptr<const VideoFrame> latest_frame_{};
+  std::shared_ptr<const std::vector<float>> latest_audio_{};
+  std::atomic_uint64_t observation_id_{std::uint64_t{1} << 63U};
 #endif
   mutable std::mutex mutex_{};
   std::atomic<WorkerState> state_{WorkerState::stopped};

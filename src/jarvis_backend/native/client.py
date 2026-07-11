@@ -174,8 +174,13 @@ class NamedPipeNativeClient(NativeClient):
                     else:
                         pending.set_result(data)
                 elif frame.message_type == MessageType.RESULT:
+                    event_type = (
+                        "perception.completed"
+                        if frame.request_id >= (1 << 63)
+                        else "answer.completed"
+                    )
                     await self._events.put(
-                        {"type": "answer.completed", "request_id": frame.request_id, **data}
+                        {"type": event_type, "request_id": frame.request_id, **data}
                     )
                 else:
                     await self._events.put(

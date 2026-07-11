@@ -12,6 +12,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+$utf8 = [Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8
+[Console]::OutputEncoding = $utf8
+$OutputEncoding = $utf8
+$env:PYTHONUTF8 = "1"
+$env:VSLANG = "1033"
+& "$env:SystemRoot\System32\chcp.com" 65001 *> $null
 
 $ProjectRoot = $PSScriptRoot
 $RuntimeRoot = Join-Path $ProjectRoot ".runtime"
@@ -698,6 +705,18 @@ function Get-PatchedUpstreamSource {
     $cacheRoot = Join-Path $RuntimeRoot "u\$cacheName"
     $readyMarker = Join-Path $cacheRoot ".jarvis-patches-applied"
     if (Test-Path -LiteralPath $readyMarker -PathType Leaf) {
+        & "git.exe" -C $cacheRoot rev-parse --verify HEAD *>$null
+        if ($LASTEXITCODE -ne 0) {
+            Invoke-External -FilePath "git.exe" -Arguments @(
+                "-c", "core.autocrlf=false", "-C", $cacheRoot, "add", "--all"
+            )
+            Invoke-External -FilePath "git.exe" -Arguments @(
+                "-C", $cacheRoot,
+                "-c", "user.name=AI Jarvis",
+                "-c", "user.email=local@aijarvis.invalid",
+                "commit", "--quiet", "-m", "Apply reviewed Jarvis runtime patches"
+            )
+        }
         return $cacheRoot
     }
 
@@ -713,6 +732,9 @@ function Get-PatchedUpstreamSource {
     New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
     Get-ChildItem -LiteralPath $vendorSource -Force | Copy-Item -Destination $cacheRoot -Recurse -Force
     Invoke-External -FilePath "git.exe" -Arguments @("-C", $cacheRoot, "init", "--quiet")
+    Invoke-External -FilePath "git.exe" -Arguments @(
+        "-C", $cacheRoot, "config", "core.autocrlf", "false"
+    )
 
     foreach ($patch in $patchFiles) {
         $manifestEntry = @($manifest.patches | Where-Object {
@@ -733,6 +755,15 @@ function Get-PatchedUpstreamSource {
         Invoke-External -FilePath "git.exe" -Arguments @("-C", $cacheRoot, "apply", "--check", $patch.FullName)
         Invoke-External -FilePath "git.exe" -Arguments @("-C", $cacheRoot, "apply", $patch.FullName)
     }
+    Invoke-External -FilePath "git.exe" -Arguments @(
+        "-c", "core.autocrlf=false", "-C", $cacheRoot, "add", "--all"
+    )
+    Invoke-External -FilePath "git.exe" -Arguments @(
+        "-C", $cacheRoot,
+        "-c", "user.name=AI Jarvis",
+        "-c", "user.email=local@aijarvis.invalid",
+        "commit", "--quiet", "-m", "Apply reviewed Jarvis runtime patches"
+    )
     Set-Content -LiteralPath $readyMarker -Value $patchFingerprint -Encoding ASCII
     return $cacheRoot
 }
@@ -811,9 +842,10 @@ function Build-NativeWorker {
     }
 
     Write-Step "Building the real native worker"
-    Invoke-External -FilePath $Environment.CMake -Arguments @(
+    Invoke-ExternalWithHeartbeat -FilePath $Environment.CMake -Activity "Native build" -Arguments @(
         "--build", $BuildRoot, "--config", "Release",
-        "--target", "jarvis-native-worker", "--parallel", "4"
+        "--target", "jarvis-native-worker", "--parallel", "4",
+        "--", "/nologo", "/verbosity:quiet"
     )
 
     $worker = Get-ChildItem -LiteralPath $BuildRoot -Filter "jarvis-native-worker.exe" -File -Recurse |
@@ -897,6 +929,9 @@ function Assert-RealInferenceSmokeTest {
             $text = [string]$answer.payload.text
             if ($text -match "(?i)\[stub OmniRuntime\]|inference backend not linked|^runtime error:") {
                 throw "The worker returned a stub/runtime-error response: $text"
+            }
+            if ($text -notmatch "(?i)JARVIS_REAL_READY") {
+                throw "The model returned text but did not follow the smoke-test prompt. Text prefill is not working: $text"
             }
             $displayText = ($text -replace "\s+", " ").Trim()
             if ($displayText.Length -gt 160) {
@@ -1002,7 +1037,9 @@ function Start-Jarvis {
         Assert-RealInferenceSmokeTest -ApiRoot $apiRoot
 
         Write-Host "`nAI Jarvis is running in real process mode: $healthUri" -ForegroundColor Green
+        Write-Host "Opening the Jarvis console: http://127.0.0.1:8000/" -ForegroundColor Green
         Write-Host "Press Ctrl+C to stop both processes." -ForegroundColor Green
+        Start-Process "http://127.0.0.1:8000/"
         $healthFailures = 0
         while (-not $backendProcess.HasExited -and -not $workerProcess.HasExited) {
             Start-Sleep -Seconds 2

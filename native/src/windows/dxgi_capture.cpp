@@ -8,27 +8,70 @@
 
 #include <chrono>
 #include <cstring>
+#include <iostream>
+#include <sstream>
 #include <stdexcept>
 
 namespace jarvis::win {
 using Microsoft::WRL::ComPtr;
 namespace {
 void check(HRESULT hr, const char* what) { if (FAILED(hr)) throw std::runtime_error(what); }
+std::string hresult_message(const char* what, HRESULT hr) {
+  std::ostringstream message;
+  message << what << " (HRESULT=0x" << std::hex << static_cast<unsigned long>(hr) << ')';
+  return message.str();
+}
 class DxgiDesktopCapture final : public IDesktopCapture {
  public:
   void start() override {
     if (duplication_) return;
-    D3D_FEATURE_LEVEL level{};
-    check(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                            nullptr, 0, D3D11_SDK_VERSION, &device_, &level, &context_), "D3D11CreateDevice failed");
-    ComPtr<IDXGIDevice> dxgi_device; check(device_.As(&dxgi_device), "IDXGIDevice unavailable");
-    ComPtr<IDXGIAdapter> adapter; check(dxgi_device->GetAdapter(&adapter), "GetAdapter failed");
-    ComPtr<IDXGIOutput> output; check(adapter->EnumOutputs(0, &output), "no desktop output");
-    ComPtr<IDXGIOutput1> output1; check(output.As(&output1), "IDXGIOutput1 unavailable");
-    check(output1->DuplicateOutput(device_.Get(), &duplication_), "DuplicateOutput failed");
+    ComPtr<IDXGIFactory1> factory;
+    check(CreateDXGIFactory1(IID_PPV_ARGS(&factory)), "CreateDXGIFactory1 failed");
+    HRESULT last_error = DXGI_ERROR_NOT_FOUND;
+    for (UINT adapter_index = 0;; ++adapter_index) {
+      ComPtr<IDXGIAdapter1> adapter;
+      if (factory->EnumAdapters1(adapter_index, &adapter) == DXGI_ERROR_NOT_FOUND) break;
+      for (UINT output_index = 0;; ++output_index) {
+        ComPtr<IDXGIOutput> output;
+        const auto output_hr = adapter->EnumOutputs(output_index, &output);
+        if (output_hr == DXGI_ERROR_NOT_FOUND) break;
+        if (FAILED(output_hr)) { last_error = output_hr; continue; }
+        DXGI_OUTPUT_DESC output_desc{};
+        if (FAILED(output->GetDesc(&output_desc)) || !output_desc.AttachedToDesktop) continue;
+
+        ComPtr<ID3D11Device> candidate_device;
+        ComPtr<ID3D11DeviceContext> candidate_context;
+        D3D_FEATURE_LEVEL level{};
+        const auto device_hr = D3D11CreateDevice(
+            adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            nullptr, 0, D3D11_SDK_VERSION, &candidate_device, &level, &candidate_context);
+        if (FAILED(device_hr)) { last_error = device_hr; continue; }
+        ComPtr<IDXGIOutput1> output1;
+        const auto output1_hr = output.As(&output1);
+        if (FAILED(output1_hr)) { last_error = output1_hr; continue; }
+        ComPtr<IDXGIOutputDuplication> candidate_duplication;
+        const auto duplicate_hr = output1->DuplicateOutput(candidate_device.Get(), &candidate_duplication);
+        if (FAILED(duplicate_hr)) { last_error = duplicate_hr; continue; }
+        device_ = std::move(candidate_device);
+        context_ = std::move(candidate_context);
+        duplication_ = std::move(candidate_duplication);
+        return;
+      }
+    }
+    std::cerr << hresult_message("DXGI desktop duplication unavailable; using GDI fallback", last_error) << '\n';
+    start_gdi();
   }
-  void stop() noexcept override { staging_.Reset(); duplication_.Reset(); context_.Reset(); device_.Reset(); }
+  void stop() noexcept override {
+    if (memory_dc_ && old_bitmap_) SelectObject(memory_dc_, old_bitmap_);
+    if (bitmap_) DeleteObject(bitmap_);
+    if (memory_dc_) DeleteDC(memory_dc_);
+    if (screen_dc_) ReleaseDC(nullptr, screen_dc_);
+    screen_dc_ = nullptr; memory_dc_ = nullptr; bitmap_ = nullptr; old_bitmap_ = nullptr; dib_bits_ = nullptr;
+    gdi_fallback_ = false;
+    staging_.Reset(); duplication_.Reset(); context_.Reset(); device_.Reset();
+  }
   std::optional<VideoFrame> next_frame(std::uint32_t timeout_ms) override {
+    if (gdi_fallback_) return next_gdi_frame();
     if (!duplication_) throw std::runtime_error("desktop capture not started");
     DXGI_OUTDUPL_FRAME_INFO info{}; ComPtr<IDXGIResource> resource;
     const auto hr = duplication_->AcquireNextFrame(timeout_ms, &info, &resource);
@@ -61,9 +104,53 @@ class DxgiDesktopCapture final : public IDesktopCapture {
     return frame;
   }
  private:
+  void start_gdi() {
+    left_ = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    top_ = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    width_ = static_cast<std::uint32_t>(GetSystemMetrics(SM_CXVIRTUALSCREEN));
+    height_ = static_cast<std::uint32_t>(GetSystemMetrics(SM_CYVIRTUALSCREEN));
+    if (!width_ || !height_) throw std::runtime_error("virtual desktop has invalid dimensions");
+    screen_dc_ = GetDC(nullptr);
+    memory_dc_ = screen_dc_ ? CreateCompatibleDC(screen_dc_) : nullptr;
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = static_cast<LONG>(width_);
+    info.bmiHeader.biHeight = -static_cast<LONG>(height_);
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    bitmap_ = memory_dc_ ? CreateDIBSection(memory_dc_, &info, DIB_RGB_COLORS, &dib_bits_, nullptr, 0) : nullptr;
+    if (!screen_dc_ || !memory_dc_ || !bitmap_ || !dib_bits_) {
+      stop();
+      throw std::runtime_error("GDI desktop capture initialization failed");
+    }
+    old_bitmap_ = SelectObject(memory_dc_, bitmap_);
+    gdi_fallback_ = true;
+  }
+  std::optional<VideoFrame> next_gdi_frame() {
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_gdi_frame_ < std::chrono::milliseconds(250)) return std::nullopt;
+    last_gdi_frame_ = now;
+    if (!BitBlt(memory_dc_, 0, 0, static_cast<int>(width_), static_cast<int>(height_),
+                screen_dc_, left_, top_, SRCCOPY | CAPTUREBLT)) {
+      throw std::runtime_error("GDI BitBlt failed");
+    }
+    VideoFrame frame;
+    frame.width = width_; frame.height = height_; frame.row_pitch = width_ * 4U;
+    frame.timestamp_100ns = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count() / 100);
+    const auto bytes = std::size_t(frame.row_pitch) * frame.height;
+    frame.bgra.resize(bytes);
+    std::memcpy(frame.bgra.data(), dib_bits_, bytes);
+    return frame;
+  }
   ComPtr<ID3D11Device> device_; ComPtr<ID3D11DeviceContext> context_;
   ComPtr<IDXGIOutputDuplication> duplication_; ComPtr<ID3D11Texture2D> staging_;
   std::uint32_t width_{}, height_{};
+  HDC screen_dc_{}; HDC memory_dc_{}; HBITMAP bitmap_{}; HGDIOBJ old_bitmap_{}; void* dib_bits_{};
+  int left_{}, top_{};
+  bool gdi_fallback_{};
+  std::chrono::steady_clock::time_point last_gdi_frame_{};
 };
 } // namespace
 std::unique_ptr<IDesktopCapture> make_dxgi_desktop_capture() { return std::make_unique<DxgiDesktopCapture>(); }

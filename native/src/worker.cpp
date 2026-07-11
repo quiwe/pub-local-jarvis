@@ -4,10 +4,16 @@
 
 #include <chrono>
 #include <exception>
+#include <iostream>
+#include <string_view>
 #include <thread>
 #include <utility>
 
 namespace jarvis {
+namespace {
+constexpr auto kPerceptionInterval = std::chrono::seconds(8);
+constexpr std::string_view kPerceptionPrompt = R"(Continuously analyze the current screen and system audio as AI Jarvis. Return ONLY one compact JSON object with exactly these fields: {"scene":"game|course|other","confidence":0.0,"barrage":"","course_note":"","course_title":""}. For a game, barrage must be one timely Chinese comment under 30 Chinese characters about the visible gameplay; otherwise use an empty string. For an online course or lecture, course_note must be concise Chinese key knowledge from the visible slide and audible speech, and course_title should identify the subject; otherwise use empty strings. Do not use Markdown and do not add text outside JSON.)";
+}
 Worker::Worker(std::unique_ptr<IOmniRuntime> runtime) : runtime_(std::move(runtime)) {}
 Worker::~Worker() { stop(); }
 bool Worker::start(const std::string& model_path) {
@@ -39,6 +45,16 @@ void Worker::stop() noexcept {
 void Worker::submit(ScheduledRequest request) {
   std::lock_guard lock(mutex_); if (scheduler_) scheduler_->submit(std::move(request));
 }
+void Worker::submit_prompt(std::uint64_t request_id, std::string prompt) {
+  std::lock_guard lock(mutex_);
+  if (!scheduler_) return;
+  InferenceRequest request{.id=request_id, .prompt=std::move(prompt)};
+#ifdef _WIN32
+  request.frame = latest_frame_;
+  request.audio_16khz_mono = latest_audio_;
+#endif
+  scheduler_->submit({std::move(request), Priority::interactive});
+}
 void Worker::cancel(std::uint64_t id) noexcept { std::lock_guard lock(mutex_); if (scheduler_) scheduler_->cancel(id); }
 #ifdef _WIN32
 bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
@@ -54,9 +70,20 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
     std::unique_lock initial_lock(mutex_);
     auto* desktop_capture = desktop_.get(); auto* audio_capture = audio_.get();
     initial_lock.unlock();
-    try { desktop_capture->start(); audio_capture->start(); }
-    catch (...) { desktop_capture->stop(); audio_capture->stop(); return; }
+    try {
+      desktop_capture->start(); audio_capture->start();
+      std::cerr << "Jarvis monitoring capture started" << '\n';
+    } catch (const std::exception& error) {
+      std::cerr << "Jarvis monitoring capture failed to start: " << error.what() << '\n';
+      desktop_capture->stop(); audio_capture->stop(); return;
+    } catch (...) {
+      std::cerr << "Jarvis monitoring capture failed to start: unknown error" << '\n';
+      desktop_capture->stop(); audio_capture->stop(); return;
+    }
     auto deadline = std::chrono::steady_clock::now();
+    auto next_perception = deadline;
+    bool first_frame_logged = false;
+    auto last_capture_error = std::chrono::steady_clock::time_point{};
     std::vector<float> accumulated;
     while (!stop.stop_requested()) {
       deadline += interval;
@@ -78,12 +105,38 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
         if (accumulated.size() > required) accumulated.erase(accumulated.begin(), accumulated.end() - required);
         auto audio_window = std::make_shared<std::vector<float>>(std::move(accumulated)); accumulated.clear();
         if (frame) {
-          submit({InferenceRequest{.id=observation_id_.fetch_add(1), .prompt="Observe the current screen and audio.",
-                                   .frame=std::move(frame), .audio_16khz_mono=std::move(audio_window)},
-                  Priority::normal});
+          if (!first_frame_logged) {
+            std::cerr << "Jarvis monitoring received first desktop frame: "
+                      << frame->width << 'x' << frame->height << '\n';
+            first_frame_logged = true;
+          }
+          {
+            std::lock_guard lock(mutex_);
+            latest_frame_ = frame;
+            latest_audio_ = audio_window;
+          }
+          const auto now = std::chrono::steady_clock::now();
+          if (now >= next_perception) {
+            submit({InferenceRequest{.id=observation_id_.fetch_add(1),
+                                     .prompt=std::string(kPerceptionPrompt),
+                                     .frame=std::move(frame),
+                                     .audio_16khz_mono=std::move(audio_window)},
+                    Priority::normal});
+            next_perception = now + kPerceptionInterval;
+          }
+        }
+      } catch (const std::exception& error) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_capture_error >= std::chrono::seconds(5)) {
+          std::cerr << "Jarvis monitoring capture tick failed: " << error.what() << '\n';
+          last_capture_error = now;
         }
       } catch (...) {
-        // A device invalidation drops this tick. The next tick retries through the capture implementation.
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_capture_error >= std::chrono::seconds(5)) {
+          std::cerr << "Jarvis monitoring capture tick failed: unknown error" << '\n';
+          last_capture_error = now;
+        }
       }
       std::this_thread::sleep_until(deadline);
     }
@@ -94,7 +147,11 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
 void Worker::stop_monitoring() noexcept {
   if (capture_thread_.joinable()) { capture_thread_.request_stop(); capture_thread_.join(); }
   std::unique_ptr<IDesktopCapture> desktop; std::unique_ptr<IAudioCapture> audio_capture;
-  { std::lock_guard lock(mutex_); desktop = std::move(desktop_); audio_capture = std::move(audio_); }
+  {
+    std::lock_guard lock(mutex_);
+    desktop = std::move(desktop_); audio_capture = std::move(audio_);
+    latest_frame_.reset(); latest_audio_.reset();
+  }
   if (audio_capture) audio_capture->stop();
   if (desktop) desktop->stop();
 }

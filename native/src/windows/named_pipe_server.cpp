@@ -91,7 +91,7 @@ int NamedPipeServer::run() {
       if (type == ipc::MessageType::cancel) impl_->worker.cancel(id);
       if (type == ipc::MessageType::submit) {
         std::string prompt(reinterpret_cast<const char*>(decoded.message.payload.data()), decoded.message.payload.size());
-        impl_->worker.submit({InferenceRequest{.id=id, .prompt=std::move(prompt)}, Priority::interactive});
+        impl_->worker.submit_prompt(id, std::move(prompt));
       }
       if (type == ipc::MessageType::hello || type == ipc::MessageType::start ||
           type == ipc::MessageType::stop || type == ipc::MessageType::cancel ||

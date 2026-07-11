@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from jarvis_backend.barrage import BarrageItem, BarragePolicy
-from jarvis_backend.courses import CourseRepository, CourseState, desktop_path
+from jarvis_backend.courses import CourseRepository, CourseState, CourseStatus, desktop_path
 from jarvis_backend.memory import MemoryEvent, MemoryStore
 from jarvis_backend.native import NativeClient, WorkerSupervisor
 from jarvis_backend.orchestrator.events import Event, EventBus
@@ -37,6 +38,10 @@ class OrchestrationService:
         self.memory = MemoryStore(settings.memory.root)
         self.courses = CourseRepository(settings.courses.sessions_root)
         self.supervisor = WorkerSupervisor(native_client)
+        self._auto_course_id: str | None = None
+        self._non_course_streak = 0
+        self._last_course_note = ""
+        self._last_barrage = ""
 
     async def start(self) -> None:
         await self.lifecycle.transition(LifecycleState.STARTING)
@@ -52,6 +57,8 @@ class OrchestrationService:
         if self.lifecycle.snapshot.state == LifecycleState.STOPPED:
             return
         await self.lifecycle.transition(LifecycleState.STOPPING)
+        if self._auto_course_id:
+            await self._finish_auto_course()
         await self.supervisor.stop()
         await self.lifecycle.transition(LifecycleState.STOPPED)
         await self.events.publish(Event("lifecycle.changed", {"state": "stopped"}))
@@ -109,6 +116,10 @@ class OrchestrationService:
         output_root = self.settings.courses.output_root or (desktop_path() / "Jarvis-Courses")
         session.finalize(output_root)
         state = session.state
+        if session_id == self._auto_course_id:
+            self._auto_course_id = None
+            self._non_course_streak = 0
+            self._last_course_note = ""
         await self.events.publish(Event("course.finished", state.as_dict()))
         return state
 
@@ -120,7 +131,101 @@ class OrchestrationService:
 
     async def _on_native_event(self, payload: dict[str, Any]) -> None:
         topic = str(payload.get("type", "native.event"))
+        if topic == "perception.completed":
+            await self._handle_perception(payload)
+            return
         await self.events.publish(Event(topic, payload))
+
+    @staticmethod
+    def _parse_perception(text: str) -> dict[str, Any]:
+        start = text.find("{")
+        if start < 0:
+            raise ValueError("perception response contains no JSON object")
+        value, _ = json.JSONDecoder().raw_decode(text[start:])
+        if not isinstance(value, dict):
+            raise ValueError("perception response is not an object")
+        scene = str(value.get("scene", "other")).casefold()
+        if scene not in {"game", "course", "other"}:
+            scene = "other"
+        try:
+            confidence = max(0.0, min(1.0, float(value.get("confidence", 0.0))))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        return {
+            "scene": scene,
+            "confidence": confidence,
+            "barrage": str(value.get("barrage", "")).strip()[:120],
+            "course_note": str(value.get("course_note", "")).strip()[:2000],
+            "course_title": str(value.get("course_title", "")).strip()[:128],
+        }
+
+    async def _handle_perception(self, payload: dict[str, Any]) -> None:
+        try:
+            result = self._parse_perception(str(payload.get("text", "")))
+        except (ValueError, json.JSONDecodeError) as exc:
+            await self.events.publish(
+                Event(
+                    "perception.failed",
+                    {"error": str(exc), "request_id": payload.get("request_id")},
+                )
+            )
+            return
+
+        await self.events.publish(Event("perception.completed", result))
+        scene = result["scene"]
+        if scene == "game" and result["barrage"] and result["barrage"] != self._last_barrage:
+            self._last_barrage = result["barrage"]
+            await self.events.publish(
+                Event(
+                    "barrage.generated",
+                    {"text": result["barrage"], "confidence": result["confidence"]},
+                )
+            )
+
+        if scene == "course":
+            self._non_course_streak = 0
+            await self._record_course_perception(result)
+        elif self._auto_course_id:
+            self._non_course_streak += 1
+            if self._non_course_streak >= 3:
+                await self._finish_auto_course()
+
+    async def _record_course_perception(self, result: dict[str, Any]) -> None:
+        note = str(result["course_note"])
+        if not note or note == self._last_course_note:
+            return
+        if not self._auto_course_id:
+            recording = [
+                session for session in self.courses.sessions()
+                if session.state.status == CourseStatus.RECORDING
+            ]
+            if recording:
+                session = recording[-1]
+            else:
+                stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+                title = str(result["course_title"]) or f"自动网课记录 {stamp}"
+                session = self.courses.create(title, session_id=f"auto-{stamp}")
+                await self.events.publish(Event("course.started", session.state.as_dict()))
+            self._auto_course_id = session.state.id
+
+        session = self.courses.open(self._auto_course_id)
+
+        def summarize(previous: str, current: str) -> str:
+            line = current.strip()
+            combined = f"{previous.rstrip()}\n- {line}" if previous.strip() else f"- {line}"
+            return combined[-8000:]
+
+        state = session.append_transcript(note, summarizer=summarize)
+        self._last_course_note = note
+        await self.events.publish(
+            Event("course.note.recorded", {"id": state.id, "note": note, "summary": state.summary})
+        )
+
+    async def _finish_auto_course(self) -> None:
+        session_id = self._auto_course_id
+        if not session_id:
+            return
+        await self.finish_course(session_id)
 
     @property
     def native_connected(self) -> bool:

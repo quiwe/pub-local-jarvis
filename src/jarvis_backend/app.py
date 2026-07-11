@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 
 from jarvis_backend.api import api_router, websocket_router
 from jarvis_backend.native import InProcessNativeClient, NamedPipeNativeClient, NativeClient
@@ -43,6 +45,11 @@ def create_app(
         lifespan=lifespan,
     )
     application.state.orchestrator = orchestrator
+
+    @application.get("/", include_in_schema=False, response_class=FileResponse)
+    async def console() -> FileResponse:
+        return FileResponse(Path(__file__).with_name("web") / "index.html")
+
     application.include_router(api_router)
     application.include_router(websocket_router)
     return application

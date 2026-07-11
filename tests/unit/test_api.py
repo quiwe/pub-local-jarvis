@@ -16,6 +16,17 @@ def test_health_and_command_flow() -> None:
         assert response.json()["result"]["result"] == "pong"
 
 
+def test_console_is_served_at_root() -> None:
+    app = create_app(Settings(), InProcessNativeClient())
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert 'id="jarvis-console"' in response.text
+    assert "/ws/events" in response.text
+
+
 def test_scene_endpoint_reports_only_stable_change() -> None:
     app = create_app(Settings(), InProcessNativeClient())
     with TestClient(app) as client:

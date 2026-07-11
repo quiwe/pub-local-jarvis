@@ -17,9 +17,9 @@
   "patches": [
     {
       "path": "patches/0001-text-input-runtime.patch",
-      "sha256": "74a9ad7e67301faaf15182ac769230a2cbe5281e8c812a714c606e55c72477e5",
+      "sha256": "cc8b1c4abb62a736cf190da3fdb1c29a260130f4b6cb3651696479703150783e",
       "upstream_revision": "b9d15b83ee353b2eaeee4d9318c98a35a1347486",
-      "purpose": "Expose the pinned omni library through the stable omni_text_runtime target used by the Jarvis adapter"
+      "purpose": "Expose the pinned omni library through the stable omni_text_runtime target and evaluate user text in the synchronous prefill path used by the Jarvis adapter"
     }
   ],
   "excluded": [

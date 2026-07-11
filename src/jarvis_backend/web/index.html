@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>JARVIS Console</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: #090c10;
+      color: #edf2f5;
+      font-synthesis: none;
+      --surface: #11161c;
+      --surface-2: #171d24;
+      --line: #29323b;
+      --muted: #8e9aa5;
+      --cyan: #52d3e5;
+      --green: #60d394;
+      --amber: #e7bb67;
+      --danger: #f07878;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { height: 100%; margin: 0; }
+
+    body {
+      min-width: 320px;
+      overflow: hidden;
+      background:
+        linear-gradient(rgba(82, 211, 229, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(82, 211, 229, 0.025) 1px, transparent 1px),
+        #090c10;
+      background-size: 32px 32px;
+    }
+
+    button, textarea, input { font: inherit; letter-spacing: 0; }
+
+    button { cursor: pointer; }
+
+    button:focus-visible, textarea:focus-visible, input:focus-visible {
+      outline: 2px solid var(--cyan);
+      outline-offset: 2px;
+    }
+
+    #jarvis-console {
+      height: 100%;
+      display: grid;
+      grid-template-rows: 64px minmax(0, 1fr);
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 0 24px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(9, 12, 16, 0.94);
+    }
+
+    .brand { display: flex; align-items: center; gap: 13px; min-width: 0; }
+
+    .mark {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--cyan);
+      color: var(--cyan);
+      font-size: 12px;
+      font-weight: 700;
+      transform: rotate(45deg);
+    }
+
+    .mark span { transform: rotate(-45deg); }
+
+    h1 { margin: 0; font-size: 16px; font-weight: 650; }
+
+    .brand small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+
+    .header-actions { display: flex; align-items: center; gap: 16px; }
+
+    .health { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
+    .dot.online { background: var(--green); box-shadow: 0 0 12px rgba(96, 211, 148, 0.6); }
+    .dot.offline { background: var(--danger); }
+
+    .monitor-control { display: flex; align-items: center; gap: 9px; font-size: 12px; }
+
+    .switch { position: relative; width: 38px; height: 22px; }
+    .switch input { position: absolute; opacity: 0; pointer-events: none; }
+    .switch span {
+      position: absolute;
+      inset: 0;
+      border: 1px solid #44505a;
+      border-radius: 20px;
+      background: #222a32;
+      transition: 160ms ease;
+    }
+    .switch span::after {
+      content: "";
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      top: 3px;
+      left: 3px;
+      border-radius: 50%;
+      background: #a5afb8;
+      transition: 160ms ease;
+    }
+    .switch input:checked + span { border-color: var(--cyan); background: rgba(82, 211, 229, 0.15); }
+    .switch input:checked + span::after { transform: translateX(16px); background: var(--cyan); }
+    .switch input:focus-visible + span { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+    main {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+    }
+
+    .conversation {
+      position: relative;
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) auto;
+      border-right: 1px solid var(--line);
+    }
+
+    .barrage-layer {
+      position: absolute;
+      inset: 12px 0 auto 0;
+      height: 180px;
+      overflow: hidden;
+      pointer-events: none;
+      z-index: 4;
+    }
+    .barrage-line {
+      position: absolute;
+      left: 100%;
+      max-width: min(560px, 78vw);
+      padding: 7px 12px;
+      border: 1px solid rgba(82, 211, 229, 0.4);
+      border-radius: 5px;
+      background: rgba(9, 12, 16, 0.88);
+      color: #eafcff;
+      font-size: 14px;
+      white-space: nowrap;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+      animation: barrage-move 9s linear forwards;
+    }
+    @keyframes barrage-move {
+      from { transform: translateX(0); }
+      to { transform: translateX(calc(-100vw - 100%)); }
+    }
+
+    #messages {
+      overflow-y: auto;
+      padding: 28px max(24px, calc((100% - 820px) / 2));
+      scroll-behavior: smooth;
+    }
+
+    .welcome { max-width: 650px; padding-top: clamp(18px, 8vh, 90px); }
+    .eyebrow { color: var(--cyan); font-size: 11px; text-transform: uppercase; }
+    .welcome h2 { margin: 12px 0 10px; font-size: 30px; font-weight: 580; }
+    .welcome p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.75; }
+
+    .suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+    .suggestions button {
+      min-height: 36px;
+      padding: 7px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: #c8d0d6;
+      font-size: 12px;
+    }
+    .suggestions button:hover { border-color: #4c5b67; background: var(--surface-2); }
+
+    .message { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; margin: 0 0 24px; }
+    .avatar {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .message.assistant .avatar { border-color: rgba(82, 211, 229, 0.45); color: var(--cyan); }
+    .message-head { display: flex; gap: 10px; margin: 0 0 6px; font-size: 12px; }
+    .message-head time { color: var(--muted); }
+    .message-body { color: #d7dfe4; font-size: 14px; line-height: 1.72; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+    .typing span { display: inline-block; animation: pulse 1.2s infinite; color: var(--cyan); }
+    .typing span:nth-child(2) { animation-delay: 150ms; }
+    .typing span:nth-child(3) { animation-delay: 300ms; }
+    @keyframes pulse { 0%, 70%, 100% { opacity: 0.25; } 35% { opacity: 1; } }
+
+    .composer-wrap { padding: 16px max(24px, calc((100% - 820px) / 2)) 20px; border-top: 1px solid var(--line); background: #0d1116; }
+    .composer {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 42px;
+      align-items: end;
+      gap: 10px;
+      padding: 10px 10px 10px 14px;
+      border: 1px solid #35414b;
+      border-radius: 7px;
+      background: var(--surface);
+    }
+    textarea {
+      width: 100%;
+      min-height: 42px;
+      max-height: 140px;
+      padding: 10px 0 6px;
+      resize: none;
+      border: 0;
+      outline: 0 !important;
+      background: transparent;
+      color: #edf2f5;
+    }
+    textarea::placeholder { color: #6f7b85; }
+    #send {
+      width: 42px;
+      height: 42px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--cyan);
+      color: #061014;
+      font-size: 20px;
+      font-weight: 700;
+    }
+    #send:hover { background: #75deeb; }
+    #send:disabled { cursor: wait; opacity: 0.45; }
+    .composer-note { margin-top: 8px; color: #66727c; font-size: 10px; }
+
+    aside { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: #0c1015; }
+    .panel { padding: 20px; border-bottom: 1px solid var(--line); }
+    .panel-title { margin: 0 0 16px; color: #aab4bc; font-size: 11px; font-weight: 650; text-transform: uppercase; }
+    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+    .metric { padding: 14px; background: var(--surface); }
+    .metric strong { display: block; color: #e6edf1; font-size: 19px; font-weight: 550; }
+    .metric strong.scene-value { min-height: 23px; font-size: 13px; line-height: 23px; }
+    .metric span { color: var(--muted); font-size: 10px; }
+
+    .activity { min-height: 0; overflow-y: auto; }
+    #events { display: grid; gap: 14px; }
+    .event { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 10px; }
+    .event i { width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: #53616c; }
+    .event.active i { background: var(--cyan); }
+    .event p { margin: 0; color: #aeb8bf; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+    .event time { display: block; margin-top: 3px; color: #65717b; font-size: 9px; }
+
+    .actions { display: grid; gap: 8px; padding: 16px 20px; }
+    .secondary {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: transparent;
+      color: #aeb8bf;
+      font-size: 11px;
+    }
+    .secondary:hover { border-color: #53616c; color: #edf2f5; }
+
+    .toast {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      max-width: min(360px, calc(100vw - 40px));
+      padding: 11px 14px;
+      border: 1px solid #44515b;
+      border-radius: 6px;
+      background: #171d24;
+      color: #dce3e7;
+      font-size: 12px;
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+      transition: 180ms ease;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 820px) {
+      body { overflow: auto; }
+      #jarvis-console { min-height: 100%; height: auto; grid-template-rows: 58px auto; }
+      header { padding: 0 14px; }
+      .brand small, .health span { display: none; }
+      .header-actions { gap: 10px; }
+      main { grid-template-columns: 1fr; }
+      .conversation { min-height: calc(100vh - 58px); border-right: 0; }
+      #messages { min-height: 55vh; padding: 20px 16px; }
+      .welcome { padding-top: 28px; }
+      .welcome h2 { font-size: 24px; }
+      .composer-wrap { padding: 12px 12px 16px; }
+      aside { border-top: 1px solid var(--line); }
+      .activity { max-height: 260px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="jarvis-console">
+    <header>
+      <div class="brand">
+        <div class="mark" aria-hidden="true"><span>J</span></div>
+        <div><h1>JARVIS</h1><small>Local multimodal intelligence</small></div>
+      </div>
+      <div class="header-actions">
+        <div class="health"><i id="health-dot" class="dot"></i><span id="health-text">正在连接</span></div>
+        <div class="monitor-control">
+          <span>环境感知</span>
+          <label class="switch" title="启用屏幕与系统音频感知">
+            <input id="monitor" type="checkbox" aria-label="启用屏幕与系统音频感知">
+            <span></span>
+          </label>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="conversation" aria-label="与贾维斯对话">
+        <div id="barrage-layer" class="barrage-layer" aria-live="polite"></div>
+        <div id="messages" aria-live="polite">
+          <div id="welcome" class="welcome">
+            <div class="eyebrow">System online</div>
+            <h2>晚上好，有什么需要？</h2>
+            <p>本地模型已经就绪，环境感知将自动开启。你可以直接提问，我会结合当前屏幕和系统正在播放的声音进行回答。</p>
+            <div class="suggestions">
+              <button data-prompt="请用中文介绍你自己，并简要说明你当前能做什么。">介绍一下你自己</button>
+              <button data-prompt="请帮我制定今天剩余时间的高效工作计划。">规划今天的工作</button>
+              <button data-prompt="请用简洁的方式解释当前项目的系统架构。">解释项目架构</button>
+            </div>
+          </div>
+        </div>
+        <div class="composer-wrap">
+          <form id="composer" class="composer">
+            <textarea id="prompt" rows="1" maxlength="8000" placeholder="向贾维斯发送指令..." aria-label="发送给贾维斯的内容"></textarea>
+            <button id="send" type="submit" title="发送" aria-label="发送">&#8593;</button>
+          </form>
+          <div class="composer-note">回答由本机 MiniCPM-o 模型生成，数据不会发送到云端。</div>
+        </div>
+      </section>
+
+      <aside aria-label="系统状态">
+        <section class="panel">
+          <h2 class="panel-title">运行状态</h2>
+          <div class="metrics">
+            <div class="metric"><strong id="answer-count">0</strong><span>本次回答</span></div>
+            <div class="metric"><strong id="memory-count">0</strong><span>记忆事件</span></div>
+            <div class="metric"><strong id="scene-value" class="scene-value">识别中</strong><span>当前场景</span></div>
+          </div>
+        </section>
+        <section class="panel activity">
+          <h2 class="panel-title">实时活动</h2>
+          <div id="events"><div class="event"><i></i><div><p>等待系统事件</p><time>刚刚</time></div></div></div>
+        </section>
+        <div class="actions">
+          <button id="memory-refresh" class="secondary" type="button">刷新记忆状态</button>
+          <button id="memory-summary" class="secondary" type="button">生成记忆摘要</button>
+        </div>
+      </aside>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status"></div>
+
+  <script>
+    (() => {
+      const api = "/api/v1";
+      const messages = document.querySelector("#messages");
+      const welcome = document.querySelector("#welcome");
+      const prompt = document.querySelector("#prompt");
+      const send = document.querySelector("#send");
+      const monitor = document.querySelector("#monitor");
+      const eventList = document.querySelector("#events");
+      const healthDot = document.querySelector("#health-dot");
+      const healthText = document.querySelector("#health-text");
+      const answerCount = document.querySelector("#answer-count");
+      const memoryCount = document.querySelector("#memory-count");
+      const sceneValue = document.querySelector("#scene-value");
+      const barrageLayer = document.querySelector("#barrage-layer");
+      const toast = document.querySelector("#toast");
+      const seenEvents = new Set();
+      let answers = 0;
+      let awaiting = false;
+      let typingNode = null;
+      let toastTimer = null;
+      let socket = null;
+      let pollTimer = null;
+
+      const now = () => new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(new Date());
+
+      function notify(text) {
+        toast.textContent = text;
+        toast.classList.add("show");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toast.classList.remove("show"), 2600);
+      }
+
+      async function request(path, options = {}) {
+        const response = await fetch(path, {
+          ...options,
+          headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+        });
+        if (!response.ok) {
+          let detail = `请求失败 (${response.status})`;
+          try { detail = (await response.json()).detail || detail; } catch (_) { /* no body */ }
+          throw new Error(detail);
+        }
+        return response.json();
+      }
+
+      function addMessage(role, text) {
+        welcome?.remove();
+        const item = document.createElement("article");
+        item.className = `message ${role}`;
+        const label = role === "assistant" ? "JARVIS" : "YOU";
+        item.innerHTML = `<div class="avatar">${role === "assistant" ? "J" : "U"}</div><div><div class="message-head"><strong>${label}</strong><time>${now()}</time></div><div class="message-body"></div></div>`;
+        item.querySelector(".message-body").textContent = text;
+        messages.appendChild(item);
+        messages.scrollTop = messages.scrollHeight;
+        return item;
+      }
+
+      function showTyping() {
+        if (typingNode) return;
+        typingNode = addMessage("assistant", "");
+        typingNode.querySelector(".message-body").innerHTML = '<span class="typing"><span>&#9679;</span> <span>&#9679;</span> <span>&#9679;</span></span>';
+      }
+
+      function hideTyping() {
+        typingNode?.remove();
+        typingNode = null;
+      }
+
+      function addActivity(text, active = false) {
+        if (eventList.children.length === 1 && eventList.textContent.includes("等待系统事件")) eventList.textContent = "";
+        const item = document.createElement("div");
+        item.className = `event${active ? " active" : ""}`;
+        item.innerHTML = `<i></i><div><p></p><time>${now()}</time></div>`;
+        item.querySelector("p").textContent = text;
+        eventList.prepend(item);
+        while (eventList.children.length > 18) eventList.lastElementChild.remove();
+      }
+
+      function showBarrage(text) {
+        const item = document.createElement("div");
+        item.className = "barrage-line";
+        item.style.top = `${12 + Math.floor(Math.random() * 4) * 38}px`;
+        item.textContent = text;
+        barrageLayer.appendChild(item);
+        item.addEventListener("animationend", () => item.remove(), { once: true });
+      }
+
+      function handleEvent(event) {
+        if (!event?.id || seenEvents.has(event.id)) return;
+        seenEvents.add(event.id);
+        if (event.topic === "answer.completed") {
+          const text = event.payload?.text?.trim();
+          if (text) {
+            hideTyping();
+            awaiting = false;
+            send.disabled = false;
+            addMessage("assistant", text);
+            answers += 1;
+            answerCount.textContent = answers;
+            addActivity(monitor.checked ? "完成一次多模态分析" : "模型回答已完成", true);
+          }
+          return;
+        }
+        if (event.topic === "perception.completed") {
+          const names = { game: "游戏", course: "网课", other: "其他" };
+          sceneValue.textContent = names[event.payload?.scene] || "识别中";
+          addActivity(`持续感知：${sceneValue.textContent}场景`);
+          return;
+        }
+        if (event.topic === "barrage.generated") {
+          const text = event.payload?.text?.trim();
+          if (text) showBarrage(text);
+          addActivity("已生成游戏弹幕", true);
+          return;
+        }
+        if (event.topic === "course.note.recorded") {
+          addActivity(`已记录网课要点：${event.payload?.note || "新知识点"}`, true);
+          return;
+        }
+        const labels = {
+          "lifecycle.changed": "控制服务状态已更新",
+          "scene.changed": "场景状态发生变化",
+          "memory.summarized": "记忆摘要已更新",
+          "course.started": "课程记录已开始",
+          "course.finished": "课程记录已完成",
+          "perception.failed": "场景分析结果格式异常",
+          "worker.fatal": "Native Worker 连接异常"
+        };
+        addActivity(labels[event.topic] || event.topic);
+      }
+
+      async function seedEventHistory() {
+        try {
+          const history = await request(`${api}/events`);
+          history.forEach(event => seenEvents.add(event.id));
+        } catch (_) { /* socket can still recover */ }
+      }
+
+      async function pollEvents() {
+        try {
+          const history = await request(`${api}/events`);
+          history.forEach(handleEvent);
+        } catch (_) { /* health loop reports connection state */ }
+      }
+
+      function connectEvents() {
+        const scheme = location.protocol === "https:" ? "wss" : "ws";
+        socket = new WebSocket(`${scheme}://${location.host}/ws/events`);
+        socket.onopen = () => {
+          clearInterval(pollTimer);
+          pollTimer = null;
+          addActivity("实时事件通道已连接", true);
+        };
+        socket.onmessage = message => {
+          try { handleEvent(JSON.parse(message.data)); } catch (_) { /* malformed event */ }
+        };
+        socket.onclose = () => {
+          if (!pollTimer) pollTimer = setInterval(pollEvents, 1200);
+          setTimeout(connectEvents, 2500);
+        };
+      }
+
+      async function updateHealth() {
+        try {
+          const health = await request(`${api}/health`);
+          const online = health.status === "ok" && health.native_connected;
+          healthDot.className = `dot ${online ? "online" : "offline"}`;
+          healthText.textContent = online ? "本地模型在线" : "服务降级";
+        } catch (_) {
+          healthDot.className = "dot offline";
+          healthText.textContent = "连接中断";
+        }
+      }
+
+      async function updateMemory() {
+        try {
+          const state = await request(`${api}/memory/status`);
+          memoryCount.textContent = state.event_count;
+          addActivity(`记忆状态：${state.event_count} 条事件`);
+        } catch (error) { notify(error.message); }
+      }
+
+      async function sendPrompt(text) {
+        const value = text.trim();
+        if (!value || awaiting) return;
+        awaiting = true;
+        send.disabled = true;
+        prompt.value = "";
+        prompt.style.height = "auto";
+        addMessage("user", value);
+        showTyping();
+        addActivity("正在执行推理", true);
+        try {
+          await request(`${api}/commands`, {
+            method: "POST",
+            body: JSON.stringify({ command: "ask", arguments: { text: value } })
+          });
+        } catch (error) {
+          hideTyping();
+          awaiting = false;
+          send.disabled = false;
+          addMessage("assistant", `请求未完成：${error.message}`);
+        }
+      }
+
+      document.querySelector("#composer").addEventListener("submit", event => {
+        event.preventDefault();
+        sendPrompt(prompt.value);
+      });
+
+      prompt.addEventListener("keydown", event => {
+        if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+          event.preventDefault();
+          document.querySelector("#composer").requestSubmit();
+        }
+      });
+
+      prompt.addEventListener("input", () => {
+        prompt.style.height = "auto";
+        prompt.style.height = `${Math.min(prompt.scrollHeight, 140)}px`;
+      });
+
+      document.querySelectorAll("[data-prompt]").forEach(button => {
+        button.addEventListener("click", () => sendPrompt(button.dataset.prompt));
+      });
+
+      monitor.addEventListener("change", async () => {
+        monitor.disabled = true;
+        const enabled = monitor.checked;
+        try {
+          await request(`${api}/commands`, {
+            method: "POST",
+            body: JSON.stringify({ command: enabled ? "start_monitoring" : "stop_monitoring", arguments: {} })
+          });
+          addActivity(enabled ? "屏幕与系统音频感知已开启" : "环境感知已暂停", enabled);
+          notify(enabled ? "环境感知已开启" : "环境感知已关闭");
+        } catch (error) {
+          monitor.checked = !enabled;
+          notify(error.message);
+        } finally { monitor.disabled = false; }
+      });
+
+      document.querySelector("#memory-refresh").addEventListener("click", updateMemory);
+      document.querySelector("#memory-summary").addEventListener("click", async () => {
+        try {
+          const result = await request(`${api}/memory/summarize`, { method: "POST" });
+          notify(result.summary ? "记忆摘要已生成" : "暂时没有可摘要的记忆");
+          updateMemory();
+        } catch (error) { notify(error.message); }
+      });
+
+      (async () => {
+        await seedEventHistory();
+        connectEvents();
+        updateHealth();
+        updateMemory();
+        monitor.checked = true;
+        monitor.dispatchEvent(new Event("change"));
+        setInterval(updateHealth, 5000);
+        prompt.focus();
+      })();
+    })();
+  </script>
+</body>
+</html>

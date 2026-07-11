@@ -28,6 +28,9 @@ jarvis-backend = "jarvis_backend.app:run"
 [tool.hatch.build.targets.wheel]
 packages = ["src/jarvis_backend"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/jarvis_backend/web/index.html" = "jarvis_backend/web/index.html"
+
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests/unit"]

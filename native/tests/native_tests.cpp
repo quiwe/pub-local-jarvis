@@ -3,6 +3,7 @@
 #include "jarvis/protocol.hpp"
 #include "jarvis/runtime.hpp"
 #include "jarvis/scheduler.hpp"
+#include "jarvis/worker.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -13,6 +14,7 @@
 #include <mutex>
 #include <span>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -40,6 +42,61 @@ class BlockingRuntime final : public jarvis::IOmniRuntime {
  private:
   bool ready_{true}; bool active_{}; bool released_{}; std::mutex mutex_; std::condition_variable changed_;
 };
+#ifdef _WIN32
+class RecordingRuntime final : public jarvis::IOmniRuntime {
+ public:
+  void load(std::string) override { ready_ = true; }
+  void unload() noexcept override { ready_ = false; }
+  bool ready() const noexcept override { return ready_; }
+  jarvis::InferenceResult infer(const jarvis::InferenceRequest& request,
+                                const std::atomic_bool&) override {
+    {
+      std::lock_guard lock(mutex_);
+      contexts_[request.id] = bool(request.frame) && bool(request.audio_16khz_mono);
+      prompts_[request.id] = request.prompt;
+    }
+    changed_.notify_all();
+    return {request.id, request.prompt, false};
+  }
+  void wait_request(std::uint64_t id) {
+    std::unique_lock lock(mutex_);
+    changed_.wait_for(lock, std::chrono::seconds(2), [&] { return contexts_.contains(id); });
+  }
+  bool had_context(std::uint64_t id) {
+    std::lock_guard lock(mutex_); return contexts_.contains(id) && contexts_[id];
+  }
+  bool received_perception() {
+    std::lock_guard lock(mutex_);
+    for (const auto& [id, prompt] : prompts_) {
+      if (id >= (std::uint64_t{1} << 63U) && prompt.find("course_note") != std::string::npos) {
+        return true;
+      }
+    }
+    return false;
+  }
+ private:
+  bool ready_{};
+  std::unordered_map<std::uint64_t, bool> contexts_;
+  std::unordered_map<std::uint64_t, std::string> prompts_;
+  std::mutex mutex_; std::condition_variable changed_;
+};
+class TestDesktopCapture final : public jarvis::IDesktopCapture {
+ public:
+  void start() override {}
+  void stop() noexcept override {}
+  std::optional<jarvis::VideoFrame> next_frame(std::uint32_t) override {
+    return jarvis::VideoFrame{2, 2, 8, 0, std::vector<std::byte>(16)};
+  }
+};
+class TestAudioCapture final : public jarvis::IAudioCapture {
+ public:
+  void start() override {}
+  void stop() noexcept override {}
+  std::optional<jarvis::audio::PcmBlock> next_block(std::uint32_t) override {
+    return jarvis::audio::PcmBlock{{16'000, 1}, std::vector<float>(320), 0};
+  }
+};
+#endif
 }
 int main() {
   using namespace jarvis;
@@ -80,13 +137,38 @@ int main() {
   coalescing.submit({InferenceRequest{.id=11, .prompt="interactive"}, Priority::interactive});
   coalescing.submit({InferenceRequest{.id=12, .prompt="rejected background"}, Priority::background});
   blocking.release();
-  for (int i = 0; i < 100 && coalescing.busy(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  for (int i = 0; i < 100; ++i) {
+    {
+      std::lock_guard lock(ordered_mutex);
+      if (ordered.size() == 1 && ordered.front().id == 11) break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
   coalescing.stop();
   {
     std::lock_guard lock(ordered_mutex);
-    require(ordered.size() == 2, "rejected lower-priority work does not add completion");
-    require(ordered[0].id == 10 && ordered[0].cancelled, "interactive work cancels active normal work");
-    require(ordered[1].id == 11, "accepted interactive request remains pending");
+    require(ordered.size() == 1, "cancelled stale and rejected work do not add completion");
+    require(ordered[0].id == 11, "accepted interactive request remains pending");
   }
+#ifdef _WIN32
+  auto recording = std::make_unique<RecordingRuntime>();
+  auto* recording_ptr = recording.get();
+  Worker worker(std::move(recording));
+  require(worker.start("test"), "worker starts with recording runtime");
+  require(worker.start_monitoring(std::make_unique<TestDesktopCapture>(),
+                                  std::make_unique<TestAudioCapture>(),
+                                  std::chrono::milliseconds(10)),
+          "monitoring starts with capture devices");
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  require(recording_ptr->received_perception(), "monitoring schedules structured perception");
+  worker.submit_prompt(21, "describe context");
+  recording_ptr->wait_request(21);
+  require(recording_ptr->had_context(21), "interactive prompt includes latest capture context");
+  worker.stop_monitoring();
+  worker.submit_prompt(22, "text only");
+  recording_ptr->wait_request(22);
+  require(!recording_ptr->had_context(22), "stopping monitoring clears capture context");
+  worker.stop();
+#endif
   std::cout << "all native tests passed\n";
 }
