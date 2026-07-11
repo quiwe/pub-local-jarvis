@@ -1,0 +1,87 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+from jarvis_backend.orchestrator.lifecycle import LifecycleState
+
+
+class HealthResponse(BaseModel):
+    status: Literal["ok", "degraded"]
+    lifecycle: LifecycleState
+    native_connected: bool
+    version: str = "0.1.0"
+
+
+class CommandRequest(BaseModel):
+    command: str = Field(min_length=1, max_length=128)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class CommandResponse(BaseModel):
+    accepted: bool
+    result: dict[str, Any]
+
+
+class SceneObservation(BaseModel):
+    score: float = Field(ge=0, le=1)
+
+
+class SceneResponse(BaseModel):
+    active: bool
+    changed: bool
+
+
+class BarrageRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=128)
+    text: str = Field(min_length=1, max_length=4096)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    priority: int = Field(default=0, ge=-100, le=100)
+
+
+class BarrageResponse(BaseModel):
+    decision: str
+
+
+class MemoryStatusResponse(BaseModel):
+    event_count: int
+    summary: str | None
+    fact_count: int
+
+
+class MemorySummaryResponse(BaseModel):
+    summary: str
+
+
+class MemoryClearRequest(BaseModel):
+    confirm: bool = False
+
+
+class MemoryClearResponse(BaseModel):
+    cleared: bool
+
+
+class CourseStartRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=256)
+    session_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+class CourseResponse(BaseModel):
+    id: str
+    title: str
+    status: str
+    created_at: str
+    updated_at: str
+    summary: str
+    keyframes: list[dict[str, Any]]
+    error: str | None
+    output_path: str | None
+
+
+class EventMessage(BaseModel):
+    id: str
+    topic: str
+    payload: dict[str, Any]
+    occurred_at: datetime

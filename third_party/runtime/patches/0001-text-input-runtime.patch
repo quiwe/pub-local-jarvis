@@ -1,0 +1,31 @@
+From b9d15b83ee353b2eaeee4d9318c98a35a1347486 Mon Sep 17 00:00:00 2001
+From: AI Jarvis <local@aijarvis.invalid>
+Date: Sat, 11 Jul 2026 12:00:00 +0800
+Subject: [PATCH] expose the omni runtime provider target
+
+The Jarvis worker disables TTS at runtime and uses the upstream omni library
+for LLM, VPM and APM inference. Expose a stable target name for the adapter.
+
+Upstream-revision: b9d15b83ee353b2eaeee4d9318c98a35a1347486
+Update-note: rebase this alias if upstream renames the omni library target.
+---
+ tools/omni/CMakeLists.txt | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/tools/omni/CMakeLists.txt b/tools/omni/CMakeLists.txt
+index 0f4a8a3..c631f32 100644
+--- a/tools/omni/CMakeLists.txt
++++ b/tools/omni/CMakeLists.txt
+@@ -25,6 +25,9 @@ add_library(omni
+             token2wav/token2wav-profile.h
+             )
+ 
++# Stable provider name consumed by the AI Jarvis native adapter.
++add_library(omni_text_runtime ALIAS omni)
++
+ # Add CoreML related files when enabled
+ if(ENABLE_COREML)
+     target_sources(omni PRIVATE
+-- 
+2.50.1.windows.1
+
