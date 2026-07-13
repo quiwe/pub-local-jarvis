@@ -29,7 +29,7 @@ config/local.toml
 models/
 .runtime/
 memory/
-courses/
+/courses/
 *.gguf
 *.safetensors
 

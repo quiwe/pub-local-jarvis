@@ -18,6 +18,13 @@ test("generated barrage is forwarded without business logic", () => {
   );
 });
 
+test("course interaction uses the course bubble", () => {
+  assert.deepEqual(
+    routeBackendEvent({ topic: "course.interaction", payload: { text: "先想想这个条件为何必要。" } }),
+    [{ type: "bubble", text: "先想想这个条件为何必要。", tone: "course" }]
+  );
+});
+
 test("course completion returns to pet mode and exposes the output", () => {
   const effects = routeBackendEvent({
     topic: "course.finished",

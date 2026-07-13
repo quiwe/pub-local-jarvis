@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import re
 import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -49,6 +50,8 @@ class OrchestrationService:
         self._barrage_emit_credit = 1.0 - settings.interaction.game_barrage_output_ratio
         self._last_assistant_message = ""
         self._last_assistant_message_at = float("-inf")
+        self._last_course_interaction = ""
+        self._last_course_interaction_at = float("-inf")
         self._last_keyframe_requested_at: dict[str, float] = {}
 
     async def start(self) -> None:
@@ -128,6 +131,8 @@ class OrchestrationService:
             self._auto_course_id = None
             self._non_course_streak = 0
             self._last_course_note = ""
+        self._last_course_interaction = ""
+        self._last_course_interaction_at = float("-inf")
         await self.events.publish(Event("course.finished", state.as_dict()))
         return state
 
@@ -200,6 +205,7 @@ class OrchestrationService:
             confidence = 0.0
         barrage = str(value.get("barrage", "")).strip()
         course_note = str(value.get("course_note", "")).strip()
+        course_interaction = str(value.get("course_interaction", "")).strip()
         assistant_message = str(value.get("assistant_message", "")).strip()
         if scene == "game" and not barrage:
             barrage = assistant_message or course_note
@@ -209,6 +215,7 @@ class OrchestrationService:
             "barrage": barrage[:30] if scene == "game" else barrage[:120],
             "course_note": course_note[:2000],
             "course_title": str(value.get("course_title", "")).strip()[:128],
+            "course_interaction": course_interaction[:100],
             "capture_keyframe": value.get("capture_keyframe") is True,
             "assistant_message": assistant_message[:500],
         }
@@ -229,11 +236,12 @@ class OrchestrationService:
         scene = result["scene"]
         now = time.monotonic()
         barrage_can_repeat = (
-            now - self._last_barrage_at
-            >= self.settings.interaction.game_barrage_repeat_seconds
+            now - self._last_barrage_at >= self.settings.interaction.game_barrage_repeat_seconds
         )
-        barrage_candidate = scene == "game" and result["barrage"] and (
-            result["barrage"] != self._last_barrage or barrage_can_repeat
+        barrage_candidate = (
+            scene == "game"
+            and result["barrage"]
+            and (result["barrage"] != self._last_barrage or barrage_can_repeat)
         )
         if barrage_candidate:
             self._barrage_emit_credit += self.settings.interaction.game_barrage_output_ratio
@@ -267,18 +275,33 @@ class OrchestrationService:
         if scene == "course":
             self._non_course_streak = 0
             await self._record_course_perception(result)
+            message = str(result["course_interaction"])
+            cooldown_elapsed = (
+                now - self._last_course_interaction_at
+                >= self.settings.interaction.course_bubble_cooldown_seconds
+            )
+            if message and message != self._last_course_interaction and cooldown_elapsed:
+                self._last_course_interaction = message
+                self._last_course_interaction_at = now
+                await self.events.publish(
+                    Event(
+                        "course.interaction",
+                        {"text": message, "confidence": result["confidence"]},
+                    )
+                )
         elif self._auto_course_id:
             self._non_course_streak += 1
             if self._non_course_streak >= 3:
                 await self._finish_auto_course()
 
     async def _record_course_perception(self, result: dict[str, Any]) -> None:
-        note = str(result["course_note"])
+        note = self._clean_course_note(str(result["course_note"]))
         if not note or note == self._last_course_note:
             return
         if not self._auto_course_id:
             recording = [
-                session for session in self.courses.sessions()
+                session
+                for session in self.courses.sessions()
                 if session.state.status == CourseStatus.RECORDING
             ]
             if recording:
@@ -294,8 +317,11 @@ class OrchestrationService:
 
         def summarize(previous: str, current: str) -> str:
             line = current.strip()
-            combined = f"{previous.rstrip()}\n- {line}" if previous.strip() else f"- {line}"
-            return combined[-8000:]
+            existing = [item.removeprefix("- ").strip() for item in previous.splitlines()]
+            if any(self._notes_overlap(item, line) for item in existing if item):
+                return previous
+            points = [*filter(None, existing), line][-30:]
+            return "\n".join(f"- {point}" for point in points)
 
         state = session.append_transcript(note, summarizer=summarize)
         self._last_course_note = note
@@ -306,6 +332,43 @@ class OrchestrationService:
             not state.keyframes and state.id not in self._last_keyframe_requested_at
         ):
             await self._request_course_keyframe(state)
+
+    @staticmethod
+    def _clean_course_note(note: str) -> str:
+        cleaned = re.sub(r"\s+", " ", note).strip().removeprefix("- ")
+        lowered = cleaned.casefold()
+        process_markers = (
+            "metadata:",
+            "electron-desktop",
+            "正在查看",
+            "当前界面",
+            "界面显示",
+            "当前屏幕",
+            "屏幕显示",
+            "文件夹",
+            "文件列表",
+            "用户可能",
+            "视频播放器",
+            "老师在黑板",
+            "教师在黑板",
+            "i can see",
+            "the screen shows",
+            "currently viewing",
+        )
+        if any(marker in lowered for marker in process_markers):
+            return ""
+        return cleaned[:2000]
+
+    @staticmethod
+    def _notes_overlap(left: str, right: str) -> bool:
+        def normalize(value: str) -> str:
+            return re.sub(r"[^\w]", "", value.casefold())
+
+        first, second = normalize(left), normalize(right)
+        if not first or not second:
+            return False
+        shorter, longer = sorted((first, second), key=len)
+        return len(shorter) >= 8 and shorter in longer
 
     async def _request_course_keyframe(self, state: CourseState) -> None:
         if len(state.keyframes) >= self.settings.courses.max_keyframes:

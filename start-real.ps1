@@ -895,6 +895,12 @@ max_frame_bytes = 8388608
 [memory]
 root = "$(Convert-ToTomlPath (Join-Path $ProjectRoot 'memory'))"
 
+[interaction]
+ordinary_bubble_cooldown_seconds = 60.0
+course_bubble_cooldown_seconds = 90.0
+game_barrage_repeat_seconds = 12.0
+game_barrage_output_ratio = 0.667
+
 [courses]
 sessions_root = "$(Convert-ToTomlPath (Join-Path $ProjectRoot 'courses\sessions'))"
 "@

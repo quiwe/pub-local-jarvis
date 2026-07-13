@@ -8,7 +8,11 @@ def test_course_lifecycle_exact_frames_and_markdown(tmp_path):
     session = repository.create("Python Lesson", session_id="lesson-1")
     session.append_transcript("Install Python.", summarizer=lambda old, new: old + new.strip())
     frame = b"\x89PNG\r\n\x1a\nexact-payload"
-    item = session.add_keyframe(frame, timestamp_ms=1234, metadata={"window": "terminal"})
+    item = session.add_keyframe(
+        frame,
+        timestamp_ms=1234,
+        metadata={"source": "electron-desktop", "note": "The force diagram for F=ma."},
+    )
 
     assert (session.frames_path / item["filename"]).read_bytes() == frame
     output = session.finalize(tmp_path / "courses")
@@ -16,6 +20,11 @@ def test_course_lifecycle_exact_frames_and_markdown(tmp_path):
     assert "# Python Lesson" in rendered
     assert "Install Python." in rendered
     assert "1.234s" in rendered
+    assert "核心知识点" in rendered
+    assert "画面说明" in rendered
+    assert "Metadata:" not in rendered
+    assert "electron-desktop" not in rendered
+    assert "## Transcript" not in rendered
     assert output == tmp_path / "courses" / "lesson-1" / "README.md"
     assert (output.parent / "images" / item["filename"]).read_bytes() == frame
     assert repository.open("lesson-1").state.status == CourseStatus.COMPLETE

@@ -7,6 +7,8 @@ function routeBackendEvent(event) {
       return [{ type: "scene", scene: payload.scene || "other" }];
     case "assistant.message":
       return payload.text ? [{ type: "bubble", text: payload.text, tone: "info" }] : [];
+    case "course.interaction":
+      return payload.text ? [{ type: "bubble", text: payload.text, tone: "course" }] : [];
     case "barrage.generated":
       return payload.text ? [{ type: "barrage", text: payload.text }] : [];
     case "course.started":

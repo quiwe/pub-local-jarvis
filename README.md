@@ -17,7 +17,7 @@ Windows 本地优先的 AI 贾维斯应用。核心能力由后端提供，Elect
 - 16 kHz 单声道重采样、精确 2 秒音频窗口、画面指纹和 latest-only 调度。
 - 纯文件 JSONL 记忆、BM25 风格检索、摘要/事实文件和保留/清理。
 - 课程会话、转写、关键帧、可恢复 Markdown 输出及 Windows Known Folder Desktop 定位。
-- 普通场景按需气泡提醒、游戏场景桌宠隐藏与点击穿透弹幕层。
+- 普通场景按需气泡提醒、网课场景低频陪伴气泡、游戏场景桌宠隐藏与点击穿透弹幕层。
 - 网课自动开始/结束记录，并导出 `README.md` 和 `images/` 到桌面的独立课程文件夹。
 - 独立、固定提交且 SHA-256 验证的第三方运行时源码快照，以及 MiniCPM-o 模型布局校验。
 
@@ -69,6 +69,7 @@ npm start
 桌面端只消费 `/ws/events` 的后端事件：
 
 - `assistant.message` 显示普通场景气泡；
+- `course.interaction` 显示网课陪伴气泡，默认冷却 90 秒；
 - `barrage.generated` 在游戏场景显示弹幕；
 - `course.keyframe.requested` 触发一次缩放后的屏幕截图并回传课程接口；
 - `course.finished` 显示课程总结已生成，并可打开输出位置。
@@ -126,6 +127,7 @@ MVP 是文本输出，不需要 TTS、projector、Token2Wav 或参考音色文�
 - 普通运行不应持久化原始屏幕和音频。
 - 记忆默认写到 `memory/`，课程工作文件写到 `courses/sessions/`，二者均被 `.gitignore` 排除。
 - 课程关键帧只有被课程流程选中时才写盘。
+- 课程成品只展示清洗、去重后的核心知识点和关键画面说明；内部转写及截图来源元数据不会写入成品 Markdown。
 - 未配置课程输出目录时，最终工件写到 Windows Known Folder Desktop 下的 `Jarvis-Courses/<session-id>/`，其中包含 `README.md` 和 `images/`。
 - 暂停监控会停止采集线程并清空 worker 持有的采集对象。
 

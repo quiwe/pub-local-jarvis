@@ -78,8 +78,7 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
         time.sleep(0.02)
         events = client.get("/api/v1/events").json()
         assert any(
-            event["topic"] == "barrage.generated"
-            and event["payload"]["text"] == "漂亮的反杀！"
+            event["topic"] == "barrage.generated" and event["payload"]["text"] == "漂亮的反杀！"
             for event in events
         )
 
@@ -137,8 +136,7 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
         assert list((output / "images").glob("*.png"))
         events = client.get("/api/v1/events").json()
         assert any(
-            event["topic"] == "assistant.message"
-            and event["payload"]["text"] == "下载已经完成。"
+            event["topic"] == "assistant.message" and event["payload"]["text"] == "下载已经完成。"
             for event in events
         )
 
@@ -177,6 +175,50 @@ def test_interaction_frequency_balances_bubbles_and_barrage(tmp_path):
         assert [event["payload"]["text"] for event in barrages] == [
             "漂亮操作！",
             "漂亮操作！",
+        ]
+
+
+def test_course_interactions_are_low_frequency_and_process_notes_are_discarded(tmp_path):
+    with make_client(tmp_path) as client:
+        native = client.app.state.orchestrator.native_client
+
+        def emit(request_id, note, interaction):
+            client.portal.call(
+                native.emit,
+                {
+                    "type": "perception.completed",
+                    "request_id": request_id,
+                    "text": (
+                        '{"scene":"course","confidence":0.9,"course_title":"Physics",'
+                        f'"course_note":"{note}","course_interaction":"{interaction}"}}'
+                    ),
+                },
+            )
+
+        emit(100, "The screen shows a folder of course files.", "Notice why mass matters here.")
+        emit(101, "Force equals mass multiplied by acceleration.", "Connect this to inertia.")
+        time.sleep(0.03)
+
+        courses = client.get("/api/v1/courses").json()
+        assert len(courses) == 1
+        assert "Force equals" in courses[0]["summary"]
+        assert "folder" not in courses[0]["summary"]
+        events = client.get("/api/v1/events").json()
+        interactions = [event for event in events if event["topic"] == "course.interaction"]
+        assert [event["payload"]["text"] for event in interactions] == [
+            "Notice why mass matters here."
+        ]
+
+        client.app.state.orchestrator._last_course_interaction_at -= 90.0
+        emit(
+            102, "Acceleration describes how quickly velocity changes.", "Now link force to motion."
+        )
+        time.sleep(0.03)
+        events = client.get("/api/v1/events").json()
+        interactions = [event for event in events if event["topic"] == "course.interaction"]
+        assert [event["payload"]["text"] for event in interactions] == [
+            "Notice why mass matters here.",
+            "Now link force to motion.",
         ]
 
 
