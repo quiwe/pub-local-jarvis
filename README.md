@@ -68,7 +68,7 @@ npm start
 
 桌面端只消费 `/ws/events` 的后端事件：
 
-- `assistant.message` 显示普通场景气泡；
+- `assistant.message` 显示普通场景气泡，应用或内容切换时会主动互动，默认冷却 20 秒；
 - `course.interaction` 显示网课陪伴气泡，默认冷却 90 秒；
 - `barrage.generated` 在游戏场景显示弹幕；
 - `course.keyframe.requested` 触发一次缩放后的屏幕截图并回传课程接口；

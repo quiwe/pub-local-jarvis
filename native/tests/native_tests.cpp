@@ -70,9 +70,10 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
     for (const auto& [id, prompt] : prompts_) {
       if (id >= (std::uint64_t{1} << 63U) &&
           prompt.find("course_note") != std::string::npos &&
-          prompt.find("regardless of subject") != std::string::npos &&
-          prompt.find("Do not merely narrate") != std::string::npos &&
-          prompt.find("useful tactical hint") != std::string::npos) {
+          prompt.find("\"observation\"") != std::string::npos &&
+          prompt.find("普通上网与桌面场景") != std::string::npos &&
+          prompt.find("朋友测试") != std::string::npos &&
+          prompt.find("纯画面描述") != std::string::npos) {
         return true;
       }
     }

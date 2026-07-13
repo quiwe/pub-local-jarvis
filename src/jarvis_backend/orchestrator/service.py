@@ -204,6 +204,7 @@ class OrchestrationService:
         except (TypeError, ValueError):
             confidence = 0.0
         barrage = str(value.get("barrage", "")).strip()
+        observation = str(value.get("observation", "")).strip()
         course_note = str(value.get("course_note", "")).strip()
         course_interaction = str(value.get("course_interaction", "")).strip()
         assistant_message = str(value.get("assistant_message", "")).strip()
@@ -212,6 +213,7 @@ class OrchestrationService:
         return {
             "scene": scene,
             "confidence": confidence,
+            "observation": observation[:300],
             "barrage": barrage[:30] if scene == "game" else barrage[:120],
             "course_note": course_note[:2000],
             "course_title": str(value.get("course_title", "")).strip()[:128],

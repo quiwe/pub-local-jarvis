@@ -440,6 +440,48 @@ function Get-ListeningPortOwner {
     return $null
 }
 
+function Resolve-StaleJarvisBackend {
+    $portOwner = Get-ListeningPortOwner -Port 8000
+    if (-not $portOwner) {
+        return
+    }
+    if ($portOwner -eq "unknown") {
+        throw "TCP port 8000 is already in use, but its owning process could not be identified."
+    }
+
+    $backendExecutable = Join-Path $VenvRoot "Scripts\jarvis-backend.exe"
+    $backendPattern = [Regex]::Escape([IO.Path]::GetFullPath($backendExecutable))
+    $projectBackends = @(
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -match $backendPattern }
+    )
+    if (-not ($projectBackends | Where-Object { $_.ProcessId -eq [int]$portOwner })) {
+        throw "TCP port 8000 is already in use by process $portOwner, which is not this project's Jarvis backend."
+    }
+
+    $nativeConnected = $false
+    try {
+        $health = Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/health" -TimeoutSec 2
+        $nativeConnected = $health.status -eq "ok" -and $health.native_connected
+    } catch {
+        # A project backend that owns the port but cannot answer health checks is stale.
+    }
+    if ($nativeConnected) {
+        throw "AI Jarvis is already running with a healthy native connection on TCP port 8000."
+    }
+
+    Write-Warning "Recovering this project's stale backend after its native worker disconnected."
+    $projectBackends | Stop-Process -Force -ErrorAction SilentlyContinue
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    do {
+        Start-Sleep -Milliseconds 200
+        $remainingOwner = Get-ListeningPortOwner -Port 8000
+    } while ($remainingOwner -and [DateTime]::UtcNow -lt $deadline)
+    if ($remainingOwner) {
+        throw "The stale Jarvis backend did not release TCP port 8000."
+    }
+}
+
 function Test-NamedPipePresent {
     param([Parameter(Mandatory = $true)][string]$FullName)
 
@@ -896,7 +938,7 @@ max_frame_bytes = 8388608
 root = "$(Convert-ToTomlPath (Join-Path $ProjectRoot 'memory'))"
 
 [interaction]
-ordinary_bubble_cooldown_seconds = 60.0
+ordinary_bubble_cooldown_seconds = 20.0
 course_bubble_cooldown_seconds = 90.0
 game_barrage_repeat_seconds = 12.0
 game_barrage_output_ratio = 0.667
@@ -1108,6 +1150,7 @@ function Invoke-Main {
         -not $environment.PSObject.Properties["CMake"]) {
         throw "The environment check returned an invalid result. Rerun start-real.cmd; if this repeats, report the complete output."
     }
+    Resolve-StaleJarvisBackend
     $venvPython = Ensure-PythonEnvironment -Environment $environment
     Ensure-Models -VenvPython $venvPython
     $workerPath = Build-NativeWorker -Environment $environment

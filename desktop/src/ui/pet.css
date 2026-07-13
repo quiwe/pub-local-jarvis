@@ -73,7 +73,6 @@ html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background:
   background: #e9f0ee;
   overflow: hidden;
   z-index: 4;
-  -webkit-app-region: no-drag;
   cursor: pointer;
 }
 .head::before { content: ""; position: absolute; inset: 6px; border: 1px solid #9dafac; border-radius: 20px; }
@@ -115,7 +114,7 @@ html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background:
   background: #bccac7;
   z-index: 3;
 }
-.core-ring { position: absolute; left: 20px; top: 9px; width: 34px; height: 34px; display: grid; place-items: center; border: 3px solid #163438; border-radius: 50%; background: #58ddcc; color: #163438; font: 800 16px "Segoe UI", sans-serif; }
+.core-ring { position: absolute; left: 20px; top: 9px; width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 3px solid #163438; border-radius: 50%; background: #58ddcc; color: #163438; font: 800 16px "Segoe UI", sans-serif; cursor: pointer; -webkit-app-region: no-drag; }
 .status-light { position: absolute; bottom: 6px; width: 5px; height: 5px; border-radius: 50%; background: #df9d2e; }
 .status-light.one { left: 12px; }.status-light.two { right: 12px; background: #277c74; }
 .shadow { position: absolute; left: 24px; bottom: 2px; width: 96px; height: 12px; border-radius: 50%; background: rgba(13, 33, 35, .16); z-index: 1; }

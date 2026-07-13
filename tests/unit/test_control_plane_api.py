@@ -178,6 +178,51 @@ def test_interaction_frequency_balances_bubbles_and_barrage(tmp_path):
         ]
 
 
+def test_ordinary_bubble_default_cooldown_is_twenty_seconds(tmp_path):
+    with make_client(tmp_path) as client:
+        native = client.app.state.orchestrator.native_client
+        orchestrator = client.app.state.orchestrator
+
+        def emit(request_id, message):
+            client.portal.call(
+                native.emit,
+                {
+                    "type": "perception.completed",
+                    "request_id": request_id,
+                    "text": (
+                        '{"scene":"other","confidence":0.9,"barrage":"",'
+                        f'"assistant_message":"{message}"}}'
+                    ),
+                },
+            )
+
+        assert orchestrator.settings.interaction.ordinary_bubble_cooldown_seconds == 20.0
+        emit(10, "切到文档了，思路开始落地。")
+        emit(11, "搜索结束，准备认真读了。")
+        time.sleep(0.03)
+        orchestrator._last_assistant_message_at -= 20.0
+        emit(12, "资料看够了，该动笔了。")
+        time.sleep(0.03)
+
+        messages = [
+            event["payload"]["text"]
+            for event in client.get("/api/v1/events").json()
+            if event["topic"] == "assistant.message"
+        ]
+        assert messages == ["切到文档了，思路开始落地。", "资料看够了，该动笔了。"]
+
+
+def test_perception_keeps_internal_observation_separate_from_bubble_text():
+    result = create_app().state.orchestrator._parse_perception(
+        '{"scene":"other","confidence":0.9,'
+        '"observation":"编辑器中打开了代码文件",'
+        '"assistant_message":"又和代码较上劲了？"}'
+    )
+
+    assert result["observation"] == "编辑器中打开了代码文件"
+    assert result["assistant_message"] == "又和代码较上劲了？"
+
+
 def test_course_interactions_are_low_frequency_and_process_notes_are_discarded(tmp_path):
     with make_client(tmp_path) as client:
         native = client.app.state.orchestrator.native_client

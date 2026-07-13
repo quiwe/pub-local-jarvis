@@ -4,10 +4,11 @@ const pet = document.querySelector("#pet");
 const bubble = document.querySelector("#bubble");
 const bubbleText = document.querySelector("#bubble-text");
 const bubbleAction = document.querySelector("#bubble-action");
+const privacyToggle = document.querySelector("#privacy-toggle");
 let outputPath = null;
 let pointerInteractive = false;
 
-pet.addEventListener("dblclick", async event => {
+privacyToggle.addEventListener("dblclick", async event => {
   event.preventDefault();
   try {
     await window.jarvis.toggleScreenPrivacy();
