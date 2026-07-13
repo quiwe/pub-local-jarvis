@@ -27,6 +27,7 @@ class MessageType(IntEnum):
     STATUS = 7
     ERROR = 8
     SHUTDOWN = 9
+    CONFIGURE_GAME = 10
 
 
 @dataclass(frozen=True, slots=True)

@@ -33,13 +33,29 @@ app.whenReady().then(async () => {
     monitoring: false,
     scene: "other",
     error: null,
+    gameProfile: "我的世界",
+  }));
+  ipcMain.handle("jarvis:get-game-profiles", () => ({
+    selectedId: "minecraft",
+    profiles: [{ id: "minecraft", name: "我的世界", prompt: "关注生存、建造、探索与战斗。", builtIn: true }],
   }));
   ipcMain.handle("jarvis:open-output", () => null);
   ipcMain.handle("jarvis:toggle-screen-privacy", () => ({
     phase: "running", monitoring: true, screenBlocked: true,
   }));
 
-  await capture("launcher", { width: 520, height: 690, useContentSize: true }, "launcher.html");
+  await capture("launcher", { width: 520, height: 760, useContentSize: true }, "launcher.html");
+  await capture(
+    "game-profile-dialog",
+    { width: 520, height: 760, useContentSize: true },
+    "launcher.html",
+    async window => {
+      await window.webContents.executeJavaScript("document.querySelector('#game-profile-button').click()");
+      await new Promise(resolve => setTimeout(resolve, 150));
+      const visible = await window.webContents.executeJavaScript("document.querySelector('#game-profile-dialog').open");
+      if (!visible) throw new Error("game profile dialog did not open");
+    }
+  );
   await capture(
     "pet-bubble",
     { width: 390, height: 300, backgroundColor: "#d8dfdd" },

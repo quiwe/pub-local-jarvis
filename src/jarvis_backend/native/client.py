@@ -82,6 +82,7 @@ class NamedPipeNativeClient(NativeClient):
         "cancel": MessageType.CANCEL,
         "shutdown": MessageType.SHUTDOWN,
         "ping": MessageType.HELLO,
+        "set_game_profile": MessageType.CONFIGURE_GAME,
     }
 
     def __init__(self, pipe_name: str, *, timeout: float = 5.0) -> None:
@@ -134,7 +135,14 @@ class NamedPipeNativeClient(NativeClient):
         except KeyError as exc:
             raise ValueError(f"unsupported native command: {method}") from exc
         request_id = next(self._ids)
-        body = payload.get("text", "") if message_type == MessageType.SUBMIT else payload
+        if message_type == MessageType.SUBMIT:
+            body = payload.get("text", "")
+        elif message_type == MessageType.CONFIGURE_GAME:
+            name = str(payload.get("name", ""))[:80]
+            prompt = str(payload.get("prompt", ""))[:8000]
+            body = f"{name}\0{prompt}"
+        else:
+            body = payload
         raw = body.encode("utf-8") if isinstance(body, str) else json_payload(body)
         frame = encode_frame(Frame(message_type, request_id, raw))
         future = asyncio.get_running_loop().create_future()

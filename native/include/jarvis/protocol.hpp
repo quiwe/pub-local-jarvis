@@ -23,6 +23,7 @@ enum class MessageType : std::uint16_t {
   status = 7,
   error = 8,
   shutdown = 9,
+  configure_game = 10,
 };
 
 enum class StatusCode : std::uint32_t {

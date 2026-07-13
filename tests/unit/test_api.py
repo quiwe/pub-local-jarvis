@@ -16,6 +16,20 @@ def test_health_and_command_flow() -> None:
         assert response.json()["result"]["result"] == "pong"
 
 
+def test_game_profile_command_reaches_native_client() -> None:
+    app = create_app(Settings(), InProcessNativeClient())
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/commands",
+            json={
+                "command": "set_game_profile",
+                "arguments": {"name": "我的世界", "prompt": "关注生存状态"},
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["result"]["method"] == "set_game_profile"
+
+
 def test_console_is_served_at_root() -> None:
     app = create_app(Settings(), InProcessNativeClient())
     with TestClient(app) as client:

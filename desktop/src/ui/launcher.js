@@ -9,7 +9,17 @@ const statusDetail = document.querySelector("#status-detail");
 const monitorValue = document.querySelector("#monitor-value");
 const sceneValue = document.querySelector("#scene-value");
 const activityLog = document.querySelector("#activity-log");
+const gameProfileSummary = document.querySelector("#game-profile-summary");
+const profileButton = document.querySelector("#game-profile-button");
+const profileDialog = document.querySelector("#game-profile-dialog");
+const profileForm = document.querySelector("#game-profile-form");
+const profileSelect = document.querySelector("#profile-select");
+const profileName = document.querySelector("#profile-name");
+const profilePrompt = document.querySelector("#profile-prompt");
+const profileDelete = document.querySelector("#profile-delete");
+const profileError = document.querySelector("#profile-error");
 let currentPhase = "idle";
+let gameProfiles = [];
 
 const sceneNames = { game: "游戏", course: "网课", other: "其他" };
 const phaseView = {
@@ -48,7 +58,8 @@ function render(state) {
   statusTitle.textContent = title;
   statusDetail.textContent = state.error || detail;
   monitorValue.textContent = state.monitoring ? "感知中" : phase === "paused" ? "已暂停" : "未运行";
-  sceneValue.textContent = sceneNames[state.scene] || "其他";
+  sceneValue.textContent = state.scene === "game" ? `游戏 · ${state.gameProfile}` : sceneNames[state.scene] || "其他";
+  gameProfileSummary.textContent = `游戏陪伴方案：${state.gameProfile || "我的世界"}`;
   startButton.hidden = phase === "running" || phase === "paused";
   startButton.disabled = false;
   const startIcon = document.createElement("i");
@@ -90,6 +101,55 @@ pauseButton.addEventListener("click", async () => {
 });
 
 consoleButton.addEventListener("click", () => window.jarvis.openConsole());
+
+function renderProfileEditor(settings) {
+  gameProfiles = settings.profiles;
+  profileSelect.replaceChildren(...gameProfiles.map(profile => {
+    const option = document.createElement("option");
+    option.value = profile.id;
+    option.textContent = profile.builtIn ? `${profile.name}（内置）` : profile.name;
+    option.selected = profile.id === settings.selectedId;
+    return option;
+  }));
+  const profile = gameProfiles.find(item => item.id === profileSelect.value) || gameProfiles[0];
+  profileName.value = profile.name;
+  profilePrompt.value = profile.prompt;
+  profileDelete.disabled = profile.builtIn;
+  profileError.textContent = "";
+  if (window.lucide) window.lucide.createIcons();
+}
+
+profileButton.addEventListener("click", async () => {
+  renderProfileEditor(await window.jarvis.getGameProfiles());
+  profileDialog.showModal();
+});
+document.querySelector("#profile-close").addEventListener("click", () => profileDialog.close());
+profileSelect.addEventListener("change", async () => {
+  renderProfileEditor(await window.jarvis.selectGameProfile(profileSelect.value));
+});
+document.querySelector("#profile-add").addEventListener("click", () => {
+  const id = `custom-${Date.now()}`;
+  gameProfiles.push({ id, name: "新游戏", prompt: "结合当前游戏画面，给出简短、准确、自然的陪伴弹幕。", builtIn: false });
+  renderProfileEditor({ selectedId: id, profiles: gameProfiles });
+  profileName.select();
+});
+profileDelete.addEventListener("click", async () => {
+  renderProfileEditor(await window.jarvis.deleteGameProfile(profileSelect.value));
+});
+profileForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    renderProfileEditor(await window.jarvis.saveGameProfile({
+      id: profileSelect.value,
+      name: profileName.value,
+      prompt: profilePrompt.value,
+    }));
+    addLog(`已选用《${profileName.value.trim()}》游戏陪伴方案`);
+    profileDialog.close();
+  } catch (error) {
+    profileError.textContent = error.message;
+  }
+});
 window.jarvis.onState(render);
 window.jarvis.onProgress(addLog);
 

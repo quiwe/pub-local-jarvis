@@ -16,6 +16,7 @@ const { BackendManager, StartCancelledError } = require("./backend-manager");
 const { routeBackendEvent } = require("./event-router");
 const { isPetPointerInteractive } = require("./pet-hit-test");
 const { randomPrivacyDelay, randomPrivacyMessage } = require("./privacy-mode");
+const { defaultSettings, loadSettings, normalizeProfile, saveSettings } = require("./game-profiles");
 
 app.setName("AI Jarvis");
 app.commandLine.appendSwitch("disable-background-timer-throttling");
@@ -34,6 +35,8 @@ let privacyMessageTimer = null;
 let petHitTestTimer = null;
 let petMouseInteractive = false;
 let petBubbleVisible = false;
+let gameSettings = defaultSettings();
+let gameSettingsPath = "";
 const pendingCaptures = new Set();
 const state = {
   phase: "idle",
@@ -41,7 +44,26 @@ const state = {
   scene: "other",
   error: null,
   screenBlocked: false,
+  gameProfile: "我的世界",
 };
+
+function selectedGameProfile() {
+  return gameSettings.profiles.find(item => item.id === gameSettings.selectedId) || gameSettings.profiles[0];
+}
+
+function persistGameSettings() {
+  saveSettings(gameSettingsPath, gameSettings);
+  publishState({ gameProfile: selectedGameProfile().name });
+}
+
+async function syncGameProfile() {
+  const profile = selectedGameProfile();
+  if (manager && (state.phase === "running" || state.phase === "paused" || state.phase === "starting")) {
+    await manager.command("set_game_profile", { name: profile.name, prompt: profile.prompt });
+  }
+  publishState({ gameProfile: profile.name });
+  return { selectedId: gameSettings.selectedId, profiles: gameSettings.profiles.map(item => ({ ...item })) };
+}
 
 function backendRoot() {
   return app.isPackaged
@@ -62,10 +84,10 @@ function publishState(patch = {}) {
 function createLauncherWindow() {
   launcherWindow = new BrowserWindow({
     width: 520,
-    height: 690,
+    height: 760,
     useContentSize: true,
     minWidth: 480,
-    minHeight: 640,
+    minHeight: 700,
     show: false,
     backgroundColor: "#f4f7f6",
     title: "AI Jarvis",
@@ -116,7 +138,7 @@ function createPetWindow() {
   petWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   petWindow.setMovable(true);
   petWindow.setFullScreenable(false);
-  petWindow.setContentProtection(true);
+  petWindow.setContentProtection(false);
   petWindow.setIgnoreMouseEvents(true, { forward: true });
   petWindow.loadFile(path.join(__dirname, "ui", "pet.html"));
   petHitTestTimer = setInterval(updatePetMouseInteraction, 50);
@@ -190,6 +212,7 @@ function updateTrayMenu() {
 }
 
 function setScene(sceneValue) {
+  const previousScene = state.scene;
   const scene = ["game", "course", "other"].includes(sceneValue) ? sceneValue : "other";
   publishState({ scene });
   send(petWindow, "jarvis:pet-scene", scene);
@@ -202,6 +225,9 @@ function setScene(sceneValue) {
   if (scene === "game") {
     if (petWindow.isVisible()) petWindow.hide();
     barrageWindow.showInactive();
+    if (previousScene !== "game") {
+      send(barrageWindow, "jarvis:barrage", `已加载《${selectedGameProfile().name}》陪伴方案`);
+    }
   } else {
     barrageWindow.hide();
     petWindow.showInactive();
@@ -313,6 +339,7 @@ async function startJarvis() {
     publishState({ phase: "starting", error: null });
     try {
       await manager.start({ signal: startController.signal });
+      await syncGameProfile();
       await manager.command("start_monitoring");
       publishState({ phase: "running", monitoring: true, screenBlocked: false, error: null });
       setScene("other");
@@ -383,6 +410,35 @@ function registerIpc() {
   ipcMain.handle("jarvis:resume", resumeMonitoring);
   ipcMain.handle("jarvis:open-console", openConsole);
   ipcMain.handle("jarvis:get-state", () => ({ ...state }));
+  ipcMain.handle("jarvis:get-game-profiles", () => ({
+    selectedId: gameSettings.selectedId,
+    profiles: gameSettings.profiles.map(item => ({ ...item })),
+  }));
+  ipcMain.handle("jarvis:save-game-profile", async (_event, value) => {
+    const profile = normalizeProfile(value);
+    if (!profile) throw new Error("游戏名称和提示词不能为空");
+    const index = gameSettings.profiles.findIndex(item => item.id === profile.id);
+    if (index >= 0 && gameSettings.profiles[index].builtIn) profile.builtIn = true;
+    if (index >= 0) gameSettings.profiles[index] = profile;
+    else gameSettings.profiles.push(profile);
+    gameSettings.selectedId = profile.id;
+    persistGameSettings();
+    return syncGameProfile();
+  });
+  ipcMain.handle("jarvis:select-game-profile", async (_event, id) => {
+    if (!gameSettings.profiles.some(item => item.id === id)) throw new Error("游戏陪伴方案不存在");
+    gameSettings.selectedId = id;
+    persistGameSettings();
+    return syncGameProfile();
+  });
+  ipcMain.handle("jarvis:delete-game-profile", async (_event, id) => {
+    const profile = gameSettings.profiles.find(item => item.id === id);
+    if (!profile || profile.builtIn) throw new Error("内置方案不能删除");
+    gameSettings.profiles = gameSettings.profiles.filter(item => item.id !== id);
+    if (gameSettings.selectedId === id) gameSettings.selectedId = "minecraft";
+    persistGameSettings();
+    return syncGameProfile();
+  });
   ipcMain.handle("jarvis:toggle-screen-privacy", event => {
     if (!petWindow || event.sender !== petWindow.webContents) return { ...state };
     return toggleScreenPrivacy();
@@ -397,6 +453,9 @@ function registerIpc() {
 }
 
 app.whenReady().then(() => {
+  gameSettingsPath = path.join(app.getPath("userData"), "game-profiles.json");
+  gameSettings = loadSettings(gameSettingsPath);
+  state.gameProfile = selectedGameProfile().name;
   const useFake = process.env.JARVIS_DESKTOP_USE_FAKE === "1";
   manager = new BackendManager({ backendRoot: backendRoot(), useFake });
   manager.on("progress", message => send(launcherWindow, "jarvis:progress", message));

@@ -103,6 +103,12 @@ void Worker::submit_prompt(std::uint64_t request_id, std::string prompt) {
   scheduler_->submit({std::move(request), Priority::interactive});
 }
 void Worker::cancel(std::uint64_t id) noexcept { std::lock_guard lock(mutex_); if (scheduler_) scheduler_->cancel(id); }
+void Worker::set_game_profile(std::string name, std::string prompt) {
+  std::lock_guard lock(mutex_);
+  game_profile_name_ = std::move(name);
+  game_profile_prompt_ = std::move(prompt);
+  recent_perceptions_.clear();
+}
 #ifdef _WIN32
 bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
                               std::unique_ptr<IAudioCapture> audio_capture,
@@ -167,6 +173,12 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
             std::string prompt(kPerceptionPrompt);
             {
               std::lock_guard lock(mutex_);
+              if (!game_profile_name_.empty() && !game_profile_prompt_.empty()) {
+                prompt += "\n当前游戏陪伴方案：";
+                prompt += game_profile_name_;
+                prompt += "。只有当前画面确实属于游戏场景时，才应用以下游戏专属要求；不得仅凭方案名称把其他场景判为游戏。游戏专属要求：";
+                prompt += game_profile_prompt_;
+              }
               if (!recent_perceptions_.empty()) {
                 prompt += "\n最近的结构化观察（从旧到新；主要比较 observation；旧台词可能很差，禁止模仿）：";
                 for (const auto& observation : recent_perceptions_) {

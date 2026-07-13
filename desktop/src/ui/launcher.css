@@ -90,11 +90,15 @@ h1 { margin: 0; font-size: 23px; line-height: 1.2; font-weight: 650; }
 .row-icon { width: 32px; height: 32px; display: grid; place-items: center; color: #167c70; background: #e7f5f2; border-radius: 6px; }
 .row-icon.amber { color: #996512; background: #fff3dc; }
 .row-icon.red { color: #9a4940; background: #faecea; }
+.row-icon.green { color: #47723d; background: #edf6e9; }
 .row-icon svg { width: 17px; height: 17px; stroke-width: 1.8; }
 .system-row strong, .system-row small { display: block; }
 .system-row strong { margin-bottom: 3px; font-size: 13px; font-weight: 650; }
 .system-row small { color: #70807e; font-size: 11px; }
 .row-value { color: #52615f; font-size: 12px; }
+.profile-row { width: 100%; padding: 0; border: 0; border-bottom: 1px solid #e2e8e6; text-align: left; background: transparent; cursor: pointer; }
+.profile-row:hover { background: #f6f9f8; }
+.row-chevron { width: 17px; color: #7c8a88; }
 
 .activity-section { flex: 1; min-height: 155px; padding: 18px 26px; background: #f4f7f6; }
 .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
@@ -141,3 +145,23 @@ h1 { margin: 0; font-size: 23px; line-height: 1.2; font-weight: 650; }
 .icon-command:hover { background: #eef4f2; }
 .command-bar svg { width: 18px; height: 18px; }
 [hidden] { display: none !important; }
+
+.profile-dialog { width: min(440px, calc(100vw - 36px)); padding: 0; border: 1px solid #cbd7d4; border-radius: 8px; color: #182326; background: #fff; box-shadow: 0 18px 50px #122b2f33; }
+.profile-dialog::backdrop { background: #10232680; }
+.profile-dialog form { padding: 20px; }
+.dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.dialog-head h2 { margin: 0 0 5px; font-size: 17px; }
+.dialog-head p { margin: 0; color: #687875; font-size: 11px; }
+.icon-command.compact { width: 34px; height: 34px; flex: 0 0 34px; }
+.icon-command.danger { color: #9a4940; }
+.icon-command:disabled { cursor: not-allowed; opacity: .38; background: #eef2f1; }
+.profile-toolbar { display: grid; grid-template-columns: 1fr auto auto; align-items: end; gap: 8px; margin-bottom: 14px; }
+.profile-toolbar label, .field-label { display: grid; gap: 6px; color: #536360; font-size: 11px; }
+.field-label { margin-bottom: 14px; }
+select, input, textarea { width: 100%; border: 1px solid #cbd6d3; border-radius: 6px; color: #1c2c2a; background: #fff; font: inherit; }
+select, input { height: 36px; padding: 0 10px; }
+textarea { min-height: 154px; resize: vertical; padding: 10px; line-height: 1.55; }
+select:focus, input:focus, textarea:focus { outline: 2px solid #62c7bb66; border-color: #178779; }
+.profile-error { min-height: 16px; margin: -5px 0 8px; color: #9a4940; font-size: 11px; }
+.dialog-actions { display: flex; justify-content: flex-end; }
+.dialog-actions .primary-command { min-width: 150px; padding: 0 16px; }

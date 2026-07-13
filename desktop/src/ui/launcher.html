@@ -36,9 +36,14 @@
       </div>
       <div class="system-row">
         <span class="row-icon amber"><i data-lucide="gamepad-2"></i></span>
-        <div><strong>场景交互</strong><small>桌宠气泡与游戏弹幕自动切换</small></div>
+        <div><strong>场景交互</strong><small id="game-profile-summary">游戏陪伴方案：我的世界</small></div>
         <span id="scene-value" class="row-value">其他</span>
       </div>
+      <button id="game-profile-button" class="system-row profile-row" type="button">
+        <span class="row-icon green"><i data-lucide="library"></i></span>
+        <div><strong>游戏陪伴方案</strong><small>选择游戏并定制专属提示词</small></div>
+        <i class="row-chevron" data-lucide="chevron-right"></i>
+      </button>
       <div class="system-row">
         <span class="row-icon red"><i data-lucide="graduation-cap"></i></span>
         <div><strong>课程记录</strong><small>关键文本与截图导出到桌面</small></div>
@@ -68,6 +73,23 @@
       </button>
     </footer>
   </main>
+  <dialog id="game-profile-dialog" class="profile-dialog">
+    <form id="game-profile-form" method="dialog">
+      <header class="dialog-head">
+        <div><h2>游戏陪伴方案</h2><p>当前选择会在下次进入游戏场景时自动加载。</p></div>
+        <button id="profile-close" class="icon-command compact" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+      </header>
+      <div class="profile-toolbar">
+        <label><span>当前游戏</span><select id="profile-select" aria-label="当前游戏"></select></label>
+        <button id="profile-add" class="icon-command compact" type="button" title="新建方案" aria-label="新建方案"><i data-lucide="plus"></i></button>
+        <button id="profile-delete" class="icon-command compact danger" type="button" title="删除方案" aria-label="删除方案"><i data-lucide="trash-2"></i></button>
+      </div>
+      <label class="field-label"><span>游戏名称</span><input id="profile-name" maxlength="40" required></label>
+      <label class="field-label"><span>专属提示词</span><textarea id="profile-prompt" maxlength="8000" rows="9" required></textarea></label>
+      <p id="profile-error" class="profile-error" aria-live="polite"></p>
+      <footer class="dialog-actions"><button class="primary-command" type="submit"><i data-lucide="save"></i><span>保存并选用</span></button></footer>
+    </form>
+  </dialog>
   <script src="../../node_modules/lucide/dist/umd/lucide.js"></script>
   <script src="launcher.js"></script>
 </body>

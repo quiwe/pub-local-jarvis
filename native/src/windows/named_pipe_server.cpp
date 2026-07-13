@@ -93,9 +93,15 @@ int NamedPipeServer::run() {
         std::string prompt(reinterpret_cast<const char*>(decoded.message.payload.data()), decoded.message.payload.size());
         impl_->worker.submit_prompt(id, std::move(prompt));
       }
+      if (type == ipc::MessageType::configure_game) {
+        std::string value(reinterpret_cast<const char*>(decoded.message.payload.data()), decoded.message.payload.size());
+        const auto separator = value.find('\0');
+        impl_->worker.set_game_profile(value.substr(0, separator),
+                                       separator == std::string::npos ? "" : value.substr(separator + 1));
+      }
       if (type == ipc::MessageType::hello || type == ipc::MessageType::start ||
           type == ipc::MessageType::stop || type == ipc::MessageType::cancel ||
-          type == ipc::MessageType::submit) {
+          type == ipc::MessageType::submit || type == ipc::MessageType::configure_game) {
         const auto response = ipc::encode(ipc::MessageType::status, id, {});
         std::lock_guard lock(impl_->write_mutex);
         if (!write_exact(impl_->pipe, response.data(), response.size())) break;

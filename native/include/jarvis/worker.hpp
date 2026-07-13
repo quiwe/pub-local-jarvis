@@ -25,6 +25,7 @@ class Worker {
   void submit(ScheduledRequest request);
   void submit_prompt(std::uint64_t request_id, std::string prompt);
   void cancel(std::uint64_t request_id) noexcept;
+  void set_game_profile(std::string name, std::string prompt);
 #ifdef _WIN32
   bool start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
                         std::unique_ptr<IAudioCapture> audio,
@@ -45,6 +46,8 @@ class Worker {
   std::shared_ptr<const VideoFrame> latest_frame_{};
   std::shared_ptr<const std::vector<float>> latest_audio_{};
   std::deque<std::string> recent_perceptions_{};
+  std::string game_profile_name_{};
+  std::string game_profile_prompt_{};
   std::atomic_uint64_t observation_id_{std::uint64_t{1} << 63U};
 #endif
   mutable std::mutex mutex_{};
