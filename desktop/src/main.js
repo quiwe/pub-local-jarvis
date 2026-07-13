@@ -13,6 +13,7 @@ const {
   shell,
 } = require("electron");
 const { BackendManager, StartCancelledError } = require("./backend-manager");
+const { presentBarrageWindow } = require("./barrage-overlay");
 const { routeBackendEvent } = require("./event-router");
 const { isPetPointerInteractive } = require("./pet-hit-test");
 const { randomPrivacyDelay, randomPrivacyMessage } = require("./privacy-mode");
@@ -186,6 +187,12 @@ function createBarrageWindow() {
   barrageWindow.loadFile(path.join(__dirname, "ui", "barrage.html"));
 }
 
+function showBarrage(text = "") {
+  if (!barrageWindow || barrageWindow.isDestroyed()) return;
+  presentBarrageWindow(barrageWindow, screen.getPrimaryDisplay().bounds);
+  if (text) send(barrageWindow, "jarvis:barrage", text);
+}
+
 function createTray() {
   const trayIcon = nativeImage.createFromPath(path.join(__dirname, "..", "assets", "icon.png"));
   tray = new Tray(trayIcon.resize({ width: 16, height: 16 }));
@@ -226,9 +233,9 @@ function setScene(sceneValue) {
   }
   if (scene === "game") {
     if (petWindow.isVisible()) petWindow.hide();
-    barrageWindow.showInactive();
+    showBarrage();
     if (previousScene !== "game") {
-      send(barrageWindow, "jarvis:barrage", `已加载《${selectedGameProfile().name}》陪伴方案`);
+      showBarrage(`已加载《${selectedGameProfile().name}》陪伴方案`);
     }
   } else {
     barrageWindow.hide();
@@ -347,9 +354,8 @@ function handleBackendEvent(event) {
     }
     if (effect.type === "bubble" && !state.screenBlocked) showBubble(effect);
     if (effect.type === "barrage") {
-      if (state.screenBlocked || activeCourseSessionId) continue;
-      barrageWindow.showInactive();
-      send(barrageWindow, "jarvis:barrage", effect.text);
+      if (state.scene !== "game" || state.screenBlocked || activeCourseSessionId) continue;
+      showBarrage(effect.text);
     }
     if (effect.type === "capture") captureKeyframe(effect);
     if (effect.type === "fault") {

@@ -212,10 +212,9 @@ async def test_auto_course_survives_transient_scene_misclassification_and_merges
     assert len(orchestrator.courses.sessions()) == 1
 
 
-def test_interaction_frequency_balances_bubbles_and_barrage(tmp_path):
+def test_interaction_frequency_blocks_repeated_barrage_during_dedup_window(tmp_path):
     with make_client(tmp_path) as client:
         native = client.app.state.orchestrator.native_client
-        client.app.state.orchestrator.settings.interaction.game_barrage_output_ratio = 1.0
 
         def emit(request_id, scene, barrage="", message=""):
             client.portal.call(
@@ -236,7 +235,11 @@ def test_interaction_frequency_balances_bubbles_and_barrage(tmp_path):
         emit(3, "other", message="冷却期内的第二条提醒")
         emit(4, "game", barrage="漂亮操作！")
         time.sleep(0.03)
-        client.app.state.orchestrator._last_barrage_at -= 12.0
+        repeated_text, repeated_at = client.app.state.orchestrator._recent_barrages[0]
+        client.app.state.orchestrator._recent_barrages[0] = (
+            repeated_text,
+            repeated_at - 90.0,
+        )
         emit(5, "game", barrage="漂亮操作！")
         time.sleep(0.03)
         events = client.get("/api/v1/events").json()
@@ -247,6 +250,140 @@ def test_interaction_frequency_balances_bubbles_and_barrage(tmp_path):
             "漂亮操作！",
             "漂亮操作！",
         ]
+
+
+def test_game_barrage_semantic_near_duplicates_are_suppressed(tmp_path):
+    with make_client(tmp_path) as client:
+        native = client.app.state.orchestrator.native_client
+
+        for request_id, barrage in enumerate(
+            ["漂亮操作，完成反杀！", "反杀完成，这操作漂亮！", "资源够了，可以推进"],
+            start=20,
+        ):
+            client.portal.call(
+                native.emit,
+                {
+                    "type": "perception.completed",
+                    "request_id": request_id,
+                    "text": (
+                        '{"scene":"game","confidence":1.0,'
+                        f'"barrage":"{barrage}","assistant_message":""}}'
+                    ),
+                },
+            )
+
+        time.sleep(0.03)
+        generated = [
+            event["payload"]["text"]
+            for event in client.get("/api/v1/events").json()
+            if event["topic"] == "barrage.generated"
+        ]
+        assert generated == ["漂亮操作，完成反杀！", "资源够了，可以推进"]
+
+
+def test_game_barrage_prefers_declarative_candidate_over_speculative_question(tmp_path):
+    with make_client(tmp_path) as client:
+        native = client.app.state.orchestrator.native_client
+        payload = {
+            "scene": "game",
+            "confidence": 1.0,
+            "observation": "玩家站在草原，附近有羊群",
+            "barrage": "头顶方块是惊喜还是陷阱？",
+            "barrage_candidates": [
+                "头顶方块是惊喜还是陷阱？",
+                "羊群把这片草原承包了",
+                "视野开阔，先把落脚点定下来",
+            ],
+            "assistant_message": "",
+        }
+        client.portal.call(
+            native.emit,
+            {
+                "type": "perception.completed",
+                "request_id": 25,
+                "text": json.dumps(payload, ensure_ascii=False),
+            },
+        )
+
+        time.sleep(0.03)
+        generated = [
+            event["payload"]["text"]
+            for event in client.get("/api/v1/events").json()
+            if event["topic"] == "barrage.generated"
+        ]
+        assert generated == ["羊群把这片草原承包了"]
+
+
+def test_game_barrage_uses_fresh_alternative_when_primary_is_repeated(tmp_path):
+    with make_client(tmp_path) as client:
+        native = client.app.state.orchestrator.native_client
+
+        def emit(request_id, primary, candidates):
+            client.portal.call(
+                native.emit,
+                {
+                    "type": "perception.completed",
+                    "request_id": request_id,
+                    "text": json.dumps(
+                        {
+                            "scene": "game",
+                            "confidence": 1.0,
+                            "barrage": primary,
+                            "barrage_candidates": candidates,
+                            "assistant_message": "",
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            )
+
+        emit(26, "草原这局面挺安稳", ["草原这局面挺安稳"])
+        emit(
+            27,
+            "草原这局面挺安稳",
+            ["草原这局面挺安稳", "羊群已经开始自由巡逻", "先沿高处看看地形"],
+        )
+
+        time.sleep(0.03)
+        generated = [
+            event["payload"]["text"]
+            for event in client.get("/api/v1/events").json()
+            if event["topic"] == "barrage.generated"
+        ]
+        assert generated == ["草原这局面挺安稳", "羊群已经开始自由巡逻"]
+
+
+def test_game_barrage_near_duplicate_recovers_before_exact_repeat(tmp_path):
+    with make_client(tmp_path) as client:
+        native = client.app.state.orchestrator.native_client
+        orchestrator = client.app.state.orchestrator
+
+        def emit(request_id, barrage):
+            client.portal.call(
+                native.emit,
+                {
+                    "type": "perception.completed",
+                    "request_id": request_id,
+                    "text": (
+                        '{"scene":"game","confidence":1.0,'
+                        f'"barrage":"{barrage}","assistant_message":""}}'
+                    ),
+                },
+            )
+
+        emit(30, "漂亮操作，完成反杀！")
+        original, emitted_at = orchestrator._recent_barrages[0]
+        orchestrator._recent_barrages[0] = (original, emitted_at - 31.0)
+        emit(31, "反杀完成，这操作漂亮！")
+        emit(32, "漂亮操作，完成反杀！")
+
+        time.sleep(0.03)
+        generated = [
+            event["payload"]["text"]
+            for event in client.get("/api/v1/events").json()
+            if event["topic"] == "barrage.generated"
+        ]
+        assert generated == ["漂亮操作，完成反杀！", "反杀完成，这操作漂亮！"]
 
 
 def test_ordinary_bubble_default_cooldown_is_twenty_seconds(tmp_path):
@@ -336,27 +473,6 @@ def test_course_interactions_are_low_frequency_and_process_notes_are_discarded(t
             "Notice why mass matters here.",
             "Now link force to motion.",
         ]
-
-
-def test_game_barrage_output_ratio_emits_two_of_every_three_candidates(tmp_path):
-    with make_client(tmp_path) as client:
-        native = client.app.state.orchestrator.native_client
-        for offset in range(6):
-            client.portal.call(
-                native.emit,
-                {
-                    "type": "perception.completed",
-                    "request_id": 200 + offset,
-                    "text": (
-                        '{"scene":"game","confidence":1.0,'
-                        f'"barrage":"弹幕{offset}","assistant_message":""}}'
-                    ),
-                },
-            )
-        time.sleep(0.05)
-        events = client.get("/api/v1/events").json()
-        generated = [event for event in events if event["topic"] == "barrage.generated"]
-        assert len(generated) == 4
 
 
 def test_game_advice_falls_back_to_barrage_when_model_uses_wrong_field(tmp_path):

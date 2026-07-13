@@ -10,6 +10,7 @@
 #include <stop_token>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace jarvis {
 
@@ -40,12 +41,16 @@ class Worker {
   std::unique_ptr<LatestOnlyScheduler> scheduler_;
   LatestOnlyScheduler::Completion completion_{};
 #ifdef _WIN32
+  struct RecentPerception {
+    std::string observation;
+    std::vector<std::string> barrages;
+  };
   std::unique_ptr<IDesktopCapture> desktop_{};
   std::unique_ptr<IAudioCapture> audio_{};
   std::jthread capture_thread_{};
   std::shared_ptr<const VideoFrame> latest_frame_{};
   std::shared_ptr<const std::vector<float>> latest_audio_{};
-  std::deque<std::string> recent_perceptions_{};
+  std::deque<RecentPerception> recent_perceptions_{};
   std::string game_profile_name_{};
   std::string game_profile_prompt_{};
   std::atomic_uint64_t observation_id_{std::uint64_t{1} << 63U};

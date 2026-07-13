@@ -11,7 +11,7 @@ html, body, #barrage-layer { width: 100%; height: 100%; margin: 0; overflow: hid
   font-weight: 700;
   line-height: 1.35;
   text-shadow: 0 2px 2px #102326, 1px 0 #102326, -1px 0 #102326, 0 -1px #102326;
-  animation: fly 8s linear forwards;
+  animation: fly 6s linear forwards;
   white-space: nowrap;
 }
 .barrage-line::before { content: "JARVIS"; margin-right: 11px; color: #62e2d1; font-size: 11px; vertical-align: 4px; }

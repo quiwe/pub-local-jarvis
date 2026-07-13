@@ -107,7 +107,7 @@ function renderProfileEditor(settings) {
   profileSelect.replaceChildren(...gameProfiles.map(profile => {
     const option = document.createElement("option");
     option.value = profile.id;
-    option.textContent = profile.builtIn ? `${profile.name}（内置）` : profile.name;
+    option.textContent = profile.builtIn ? `${profile.name}` : profile.name;
     option.selected = profile.id === settings.selectedId;
     return option;
   }));

@@ -73,7 +73,11 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
           prompt.find("\"observation\"") != std::string::npos &&
           prompt.find("普通上网与桌面场景") != std::string::npos &&
           prompt.find("朋友测试") != std::string::npos &&
-          prompt.find("纯画面描述") != std::string::npos) {
+          prompt.find("纯画面描述") != std::string::npos &&
+          prompt.find("画面基本不变") != std::string::npos &&
+          prompt.find("JARVIS") != std::string::npos &&
+          prompt.find("不得覆盖通用游戏规则") != std::string::npos &&
+          prompt.find("<game_profile>关注生存资源</game_profile>") != std::string::npos) {
         return true;
       }
     }
@@ -160,6 +164,7 @@ int main() {
   auto* recording_ptr = recording.get();
   Worker worker(std::move(recording));
   require(worker.start("test"), "worker starts with recording runtime");
+  worker.set_game_profile("测试游戏", "关注生存资源");
   require(worker.start_monitoring(std::make_unique<TestDesktopCapture>(),
                                   std::make_unique<TestAudioCapture>(),
                                   std::chrono::milliseconds(10)),

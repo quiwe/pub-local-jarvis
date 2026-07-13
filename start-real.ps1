@@ -940,8 +940,8 @@ root = "$(Convert-ToTomlPath (Join-Path $ProjectRoot 'memory'))"
 [interaction]
 ordinary_bubble_cooldown_seconds = 20.0
 course_bubble_cooldown_seconds = 90.0
-game_barrage_repeat_seconds = 12.0
-game_barrage_output_ratio = 0.667
+game_barrage_repeat_seconds = 45.0
+game_barrage_similar_seconds = 8.0
 
 [courses]
 sessions_root = "$(Convert-ToTomlPath (Join-Path $ProjectRoot 'courses\sessions'))"

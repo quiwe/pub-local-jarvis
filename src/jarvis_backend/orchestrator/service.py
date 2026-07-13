@@ -5,8 +5,10 @@ import binascii
 import json
 import re
 import time
+from collections import deque
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from difflib import SequenceMatcher
 from typing import Any
 
 from jarvis_backend.barrage import BarrageItem, BarragePolicy
@@ -17,6 +19,43 @@ from jarvis_backend.orchestrator.events import Event, EventBus
 from jarvis_backend.orchestrator.lifecycle import Lifecycle, LifecycleState
 from jarvis_backend.orchestrator.scene import SceneHysteresis
 from jarvis_backend.settings import Settings
+
+
+def _normalize_barrage(text: str) -> str:
+    return re.sub(r"[\W_]+", "", text.casefold())
+
+
+def _barrages_are_similar(left: str, right: str) -> bool:
+    left_normalized = _normalize_barrage(left)
+    right_normalized = _normalize_barrage(right)
+    if not left_normalized or not right_normalized:
+        return False
+    if left_normalized == right_normalized:
+        return True
+    if min(len(left_normalized), len(right_normalized)) < 4:
+        return False
+    sequence_ratio = SequenceMatcher(None, left_normalized, right_normalized).ratio()
+    shorter = min(len(left_normalized), len(right_normalized))
+    shared_characters = sum(
+        min(left_normalized.count(character), right_normalized.count(character))
+        for character in set(left_normalized)
+    )
+    character_coverage = shared_characters / shorter
+    length_ratio = shorter / max(len(left_normalized), len(right_normalized))
+    return sequence_ratio >= 0.78 or (character_coverage >= 0.9 and length_ratio >= 0.65)
+
+
+def _barrage_quality_penalty(text: str) -> int:
+    penalty = 0
+    if re.search(r"[？?]|是.{0,10}还是|是不是|难道|莫非", text):
+        penalty += 6
+    if re.search(r"看起来|似乎|可能|大概|也许|不知道", text):
+        penalty += 3
+    if re.search(r"根据画面|当前画面|画面中|屏幕上", text):
+        penalty += 5
+    if len(text) < 6:
+        penalty += 2
+    return penalty
 
 
 class OrchestrationService:
@@ -46,9 +85,7 @@ class OrchestrationService:
         self._non_course_streak = 0
         self._non_course_started_at: float | None = None
         self._last_course_note = ""
-        self._last_barrage = ""
-        self._last_barrage_at = float("-inf")
-        self._barrage_emit_credit = 1.0 - settings.interaction.game_barrage_output_ratio
+        self._recent_barrages: deque[tuple[str, float]] = deque(maxlen=12)
         self._last_assistant_message = ""
         self._last_assistant_message_at = float("-inf")
         self._last_course_interaction = ""
@@ -212,11 +249,22 @@ class OrchestrationService:
         assistant_message = str(value.get("assistant_message", "")).strip()
         if scene == "game" and not barrage:
             barrage = assistant_message or course_note
+        raw_barrage_candidates = value.get("barrage_candidates", [])
+        barrage_candidates: list[str] = []
+        candidates = [
+            barrage,
+            *(raw_barrage_candidates if isinstance(raw_barrage_candidates, list) else []),
+        ]
+        for candidate in candidates:
+            candidate_text = str(candidate).strip()[:30]
+            if candidate_text and candidate_text not in barrage_candidates:
+                barrage_candidates.append(candidate_text)
         return {
             "scene": scene,
             "confidence": confidence,
             "observation": observation[:300],
-            "barrage": barrage[:30] if scene == "game" else barrage[:120],
+            "barrage": barrage[:30] if scene == "game" else "",
+            "barrage_candidates": barrage_candidates[:4] if scene == "game" else [],
             "course_note": course_note[:2000],
             "course_title": str(value.get("course_title", "")).strip()[:128],
             "course_interaction": course_interaction[:100],
@@ -236,23 +284,50 @@ class OrchestrationService:
             )
             return
 
-        await self.events.publish(Event("perception.completed", result))
         scene = result["scene"]
         now = time.monotonic()
-        barrage_can_repeat = (
-            now - self._last_barrage_at >= self.settings.interaction.game_barrage_repeat_seconds
+        barrage_history_seconds = max(
+            self.settings.interaction.game_barrage_repeat_seconds,
+            self.settings.interaction.game_barrage_similar_seconds,
         )
-        barrage_candidate = (
-            scene == "game"
-            and result["barrage"]
-            and (result["barrage"] != self._last_barrage or barrage_can_repeat)
-        )
-        if barrage_candidate:
-            self._barrage_emit_credit += self.settings.interaction.game_barrage_output_ratio
-        if barrage_candidate and self._barrage_emit_credit >= 1.0:
-            self._barrage_emit_credit -= 1.0
-            self._last_barrage = result["barrage"]
-            self._last_barrage_at = now
+        barrage_cutoff = now - barrage_history_seconds
+        while self._recent_barrages and self._recent_barrages[0][1] < barrage_cutoff:
+            self._recent_barrages.popleft()
+        if scene == "game":
+            available_candidates: list[tuple[int, float, int, str]] = []
+            for index, candidate in enumerate(result["barrage_candidates"]):
+                normalized_candidate = _normalize_barrage(candidate)
+                if any(
+                    (
+                        normalized_candidate == _normalize_barrage(previous)
+                        and now - emitted_at
+                        < self.settings.interaction.game_barrage_repeat_seconds
+                    )
+                    or (
+                        _barrages_are_similar(candidate, previous)
+                        and now - emitted_at
+                        < self.settings.interaction.game_barrage_similar_seconds
+                    )
+                    for previous, emitted_at in self._recent_barrages
+                ):
+                    continue
+                recent_similarity = max(
+                    (
+                        SequenceMatcher(
+                            None, normalized_candidate, _normalize_barrage(previous)
+                        ).ratio()
+                        for previous, _ in self._recent_barrages
+                    ),
+                    default=0.0,
+                )
+                available_candidates.append(
+                    (_barrage_quality_penalty(candidate), recent_similarity, index, candidate)
+                )
+            result["barrage"] = min(available_candidates, default=(0, 0.0, 0, ""))[-1]
+
+        await self.events.publish(Event("perception.completed", result))
+        if scene == "game" and result["barrage"]:
+            self._recent_barrages.append((result["barrage"], now))
             await self.events.publish(
                 Event(
                     "barrage.generated",
