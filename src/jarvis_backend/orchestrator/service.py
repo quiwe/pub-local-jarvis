@@ -44,6 +44,7 @@ class OrchestrationService:
         self.supervisor = WorkerSupervisor(native_client)
         self._auto_course_id: str | None = None
         self._non_course_streak = 0
+        self._non_course_started_at: float | None = None
         self._last_course_note = ""
         self._last_barrage = ""
         self._last_barrage_at = float("-inf")
@@ -130,6 +131,7 @@ class OrchestrationService:
         if session_id == self._auto_course_id:
             self._auto_course_id = None
             self._non_course_streak = 0
+            self._non_course_started_at = None
             self._last_course_note = ""
         self._last_course_interaction = ""
         self._last_course_interaction_at = float("-inf")
@@ -276,6 +278,7 @@ class OrchestrationService:
 
         if scene == "course":
             self._non_course_streak = 0
+            self._non_course_started_at = None
             await self._record_course_perception(result)
             message = str(result["course_interaction"])
             cooldown_elapsed = (
@@ -292,8 +295,17 @@ class OrchestrationService:
                     )
                 )
         elif self._auto_course_id:
+            if self._non_course_started_at is None:
+                self._non_course_started_at = now
             self._non_course_streak += 1
-            if self._non_course_streak >= 3:
+            outside_course_long_enough = (
+                now - self._non_course_started_at
+                >= self.settings.courses.exit_grace_seconds
+            )
+            if (
+                self._non_course_streak >= self.settings.courses.exit_samples
+                and outside_course_long_enough
+            ):
                 await self._finish_auto_course()
 
     async def _record_course_perception(self, result: dict[str, Any]) -> None:
@@ -320,9 +332,13 @@ class OrchestrationService:
         def summarize(previous: str, current: str) -> str:
             line = current.strip()
             existing = [item.removeprefix("- ").strip() for item in previous.splitlines()]
-            if any(self._notes_overlap(item, line) for item in existing if item):
-                return previous
-            points = [*filter(None, existing), line][-30:]
+            points = list(filter(None, existing))
+            for index, item in enumerate(points):
+                if self._notes_overlap(item, line):
+                    if self._course_note_score(line) > self._course_note_score(item):
+                        points[index] = line
+                    return "\n".join(f"- {point}" for point in points)
+            points = [*points, line][-24:]
             return "\n".join(f"- {point}" for point in points)
 
         state = session.append_transcript(note, summarizer=summarize)
@@ -370,7 +386,29 @@ class OrchestrationService:
         if not first or not second:
             return False
         shorter, longer = sorted((first, second), key=len)
-        return len(shorter) >= 8 and shorter in longer
+        if len(shorter) >= 8 and shorter in longer:
+            return True
+        if len(shorter) < 10:
+            return False
+        first_pairs = {first[index : index + 2] for index in range(len(first) - 1)}
+        second_pairs = {second[index : index + 2] for index in range(len(second) - 1)}
+        return len(first_pairs & second_pairs) / min(len(first_pairs), len(second_pairs)) >= 0.68
+
+    @staticmethod
+    def _course_note_score(note: str) -> int:
+        detail_markers = (
+            "因为",
+            "因此",
+            "所以",
+            "条件",
+            "适用",
+            "例如",
+            "即",
+            "表示",
+            "作用",
+            "区别",
+        )
+        return len(note) + 12 * sum(marker in note for marker in detail_markers)
 
     async def _request_course_keyframe(self, state: CourseState) -> None:
         if len(state.keyframes) >= self.settings.courses.max_keyframes:

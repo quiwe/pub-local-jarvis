@@ -40,4 +40,6 @@ root = "memory"
 sessions_root = "courses/sessions"
 keyframe_min_interval_seconds = 30
 max_keyframes = 40
+exit_grace_seconds = 45
+exit_samples = 4
 # Leave output_root unset to export through the Windows Known Folder Desktop path.

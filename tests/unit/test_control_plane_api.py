@@ -1,9 +1,12 @@
 import base64
+import json
 import time
 
 from fastapi.testclient import TestClient
 
+import jarvis_backend.orchestrator.service as service_module
 from jarvis_backend.app import create_app
+from jarvis_backend.courses import CourseStatus
 from jarvis_backend.settings import CourseSettings, MemorySettings, Settings
 
 
@@ -116,6 +119,8 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
         assert recorded.status_code == 200
         assert len(recorded.json()["keyframes"]) == 1
 
+        client.app.state.orchestrator.settings.courses.exit_grace_seconds = 0
+        client.app.state.orchestrator.settings.courses.exit_samples = 3
         for offset in range(2, 5):
             client.portal.call(
                 native.emit,
@@ -139,6 +144,72 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
             event["topic"] == "assistant.message" and event["payload"]["text"] == "下载已经完成。"
             for event in events
         )
+
+
+async def test_auto_course_survives_transient_scene_misclassification_and_merges_notes(
+    tmp_path, monkeypatch
+):
+    settings = Settings(
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(
+            sessions_root=tmp_path / "sessions",
+            output_root=tmp_path / "courses",
+            exit_grace_seconds=45,
+            exit_samples=4,
+        ),
+    )
+    orchestrator = create_app(settings=settings).state.orchestrator
+    clock = [0.0]
+    monkeypatch.setattr(service_module.time, "monotonic", lambda: clock[0])
+
+    async def perceive(scene, *, note=""):
+        await orchestrator._handle_perception(
+            {
+                "type": "perception.completed",
+                "text": json.dumps(
+                    {
+                        "scene": scene,
+                        "confidence": 0.9,
+                        "course_title": "高中物理：牛顿第二定律",
+                        "course_note": note,
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        )
+
+    await perceive("course", note="牛顿第二定律说明合外力等于质量与加速度的乘积。")
+    session_id = orchestrator._auto_course_id
+    assert session_id is not None
+
+    for now in (5.0, 10.0, 15.0, 20.0):
+        clock[0] = now
+        await perceive("other")
+    assert orchestrator.courses.open(session_id).state.status == CourseStatus.RECORDING
+
+    clock[0] = 25.0
+    await perceive(
+        "course",
+        note=(
+            "牛顿第二定律说明合外力等于质量与加速度的乘积，即 F=ma；"
+            "它表示力是改变物体运动状态的原因。"
+        ),
+    )
+    state = orchestrator.courses.open(session_id).state
+    assert orchestrator._auto_course_id == session_id
+    assert state.summary.count("\n") == 0
+    assert "F=ma" in state.summary
+    assert "改变物体运动状态" in state.summary
+
+    for now in (30.0, 45.0, 60.0):
+        clock[0] = now
+        await perceive("other")
+    assert orchestrator.courses.open(session_id).state.status == CourseStatus.RECORDING
+
+    clock[0] = 75.0
+    await perceive("other")
+    assert orchestrator.courses.open(session_id).state.status == CourseStatus.COMPLETE
+    assert len(orchestrator.courses.sessions()) == 1
 
 
 def test_interaction_frequency_balances_bubbles_and_barrage(tmp_path):

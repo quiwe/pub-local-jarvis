@@ -60,6 +60,8 @@ class CourseSettings(BaseModel):
     output_root: Path | None = None
     keyframe_min_interval_seconds: float = Field(default=30.0, ge=0)
     max_keyframes: int = Field(default=40, ge=1, le=200)
+    exit_grace_seconds: float = Field(default=45.0, ge=0)
+    exit_samples: int = Field(default=4, ge=1)
 
 
 class Settings(BaseModel):

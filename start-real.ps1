@@ -945,6 +945,10 @@ game_barrage_output_ratio = 0.667
 
 [courses]
 sessions_root = "$(Convert-ToTomlPath (Join-Path $ProjectRoot 'courses\sessions'))"
+keyframe_min_interval_seconds = 30
+max_keyframes = 40
+exit_grace_seconds = 45
+exit_samples = 4
 "@
     # Windows PowerShell 5.1 writes a BOM for -Encoding UTF8; tomllib rejects it.
     Set-Content -LiteralPath $configPath -Value $config -Encoding ASCII

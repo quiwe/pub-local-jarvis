@@ -127,6 +127,7 @@ MVP 是文本输出，不需要 TTS、projector、Token2Wav 或参考音色文�
 - 普通运行不应持久化原始屏幕和音频。
 - 记忆默认写到 `memory/`，课程工作文件写到 `courses/sessions/`，二者均被 `.gitignore` 排除。
 - 课程关键帧只有被课程流程选中时才写盘。
+- 自动课程需连续离开课程至少 45 秒且达到 4 次感知样本后才会结束，短暂遮挡或误判不会拆分课程。
 - 课程成品只展示清洗、去重后的核心知识点和关键画面说明；内部转写及截图来源元数据不会写入成品 Markdown。
 - 未配置课程输出目录时，最终工件写到 Windows Known Folder Desktop 下的 `Jarvis-Courses/<session-id>/`，其中包含 `README.md` 和 `images/`。
 - 暂停监控会停止采集线程并清空 worker 持有的采集对象。

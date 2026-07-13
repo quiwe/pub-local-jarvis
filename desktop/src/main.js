@@ -16,6 +16,7 @@ const { BackendManager, StartCancelledError } = require("./backend-manager");
 const { routeBackendEvent } = require("./event-router");
 const { isPetPointerInteractive } = require("./pet-hit-test");
 const { randomPrivacyDelay, randomPrivacyMessage } = require("./privacy-mode");
+const { resolveDisplayScene } = require("./scene-policy");
 const { defaultSettings, loadSettings, normalizeProfile, saveSettings } = require("./game-profiles");
 
 app.setName("AI Jarvis");
@@ -37,6 +38,7 @@ let petMouseInteractive = false;
 let petBubbleVisible = false;
 let gameSettings = defaultSettings();
 let gameSettingsPath = "";
+let activeCourseSessionId = null;
 const pendingCaptures = new Set();
 const state = {
   phase: "idle",
@@ -249,9 +251,22 @@ function showBubble(effect) {
   );
 }
 
+function restoreCoursePet() {
+  if (
+    !activeCourseSessionId ||
+    !state.monitoring ||
+    state.screenBlocked ||
+    !petWindow ||
+    petWindow.isDestroyed()
+  ) return;
+  if (barrageWindow && !barrageWindow.isDestroyed()) barrageWindow.hide();
+  petWindow.showInactive();
+}
+
 async function captureKeyframe(effect) {
   if (state.screenBlocked || !effect.id || pendingCaptures.has(effect.id)) return;
   pendingCaptures.add(effect.id);
+  restoreCoursePet();
   try {
     const display = screen.getPrimaryDisplay();
     const ratio = Math.min(1, 1280 / display.bounds.width);
@@ -274,6 +289,7 @@ async function captureKeyframe(effect) {
     send(launcherWindow, "jarvis:progress", `关键截图保存失败：${error.message}`);
   } finally {
     pendingCaptures.delete(effect.id);
+    restoreCoursePet();
   }
 }
 
@@ -315,11 +331,23 @@ async function toggleScreenPrivacy() {
 }
 
 function handleBackendEvent(event) {
+  const payload = event && event.payload ? event.payload : {};
+  if (event && event.topic === "course.started") {
+    activeCourseSessionId = payload.id || "active-course";
+  } else if (
+    event &&
+    event.topic === "course.finished" &&
+    (!payload.id || payload.id === activeCourseSessionId)
+  ) {
+    activeCourseSessionId = null;
+  }
   for (const effect of routeBackendEvent(event)) {
-    if (effect.type === "scene") setScene(effect.scene);
+    if (effect.type === "scene") {
+      setScene(resolveDisplayScene(effect.scene, Boolean(activeCourseSessionId)));
+    }
     if (effect.type === "bubble" && !state.screenBlocked) showBubble(effect);
     if (effect.type === "barrage") {
-      if (state.screenBlocked) continue;
+      if (state.screenBlocked || activeCourseSessionId) continue;
       barrageWindow.showInactive();
       send(barrageWindow, "jarvis:barrage", effect.text);
     }
