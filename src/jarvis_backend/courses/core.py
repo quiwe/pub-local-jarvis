@@ -161,6 +161,14 @@ class CourseSession:
         self._save(state)
         return state
 
+    def update_summary(self, summary: str) -> CourseState:
+        state = self.state
+        if state.status != CourseStatus.RECORDING:
+            raise RuntimeError("session is not recording")
+        state.summary = summary.strip()
+        self._save(state)
+        return state
+
     def add_keyframe(
         self,
         frame: bytes,
@@ -228,7 +236,7 @@ class MarkdownRenderer:
             "",
         ]
         if state.summary:
-            lines += ["## 核心知识点", "", state.summary, ""]
+            lines += ["## 课程总结", "", state.summary, ""]
         asset_dir = destination.parent / "images"
         asset_dir.mkdir(parents=True, exist_ok=True)
         if state.keyframes:

@@ -13,14 +13,12 @@ function routeBackendEvent(event) {
       return payload.text ? [{ type: "barrage", text: payload.text }] : [];
     case "course.started":
       return [
-        { type: "scene", scene: "course" },
         { type: "bubble", text: `开始记录课程：${payload.title || "未命名课程"}`, tone: "course" },
       ];
     case "course.keyframe.requested":
       return [{ type: "capture", ...payload }];
     case "course.finished":
       return [
-        { type: "scene", scene: "other" },
         {
           type: "bubble",
           text: "课程总结已经生成，已保存到桌面。",

@@ -92,6 +92,7 @@ class NamedPipeNativeClient(NativeClient):
         self._stream: Any = None
         self._ids = count(1)
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        self._result_requests: set[int] = set()
         self._events: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         self._reader_task: asyncio.Task[None] | None = None
         self._write_lock = asyncio.Lock()
@@ -125,6 +126,7 @@ class NamedPipeNativeClient(NativeClient):
             if not future.done():
                 future.set_exception(error)
         self._pending.clear()
+        self._result_requests.clear()
         await self._events.put(None)
 
     async def request(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -147,12 +149,15 @@ class NamedPipeNativeClient(NativeClient):
         frame = encode_frame(Frame(message_type, request_id, raw))
         future = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
+        if message_type == MessageType.SUBMIT:
+            self._result_requests.add(request_id)
         async with self._write_lock:
             await asyncio.to_thread(self._write_exact, frame)
         try:
             return await asyncio.wait_for(future, self.timeout)
         finally:
             self._pending.pop(request_id, None)
+            self._result_requests.discard(request_id)
 
     async def events(self) -> AsyncIterator[dict[str, Any]]:
         while True:
@@ -175,12 +180,21 @@ class NamedPipeNativeClient(NativeClient):
                 frame = decode_frame(header + payload)
                 data = self._decode_payload(frame)
                 pending = self._pending.get(frame.request_id)
-                if frame.message_type in {MessageType.STATUS, MessageType.ERROR} and pending:
-                    if frame.message_type == MessageType.ERROR:
-                        message = str(data.get("error", "native worker error"))
-                        pending.set_exception(RuntimeError(message))
-                    else:
+                if frame.message_type == MessageType.ERROR and pending:
+                    message = str(data.get("error", "native worker error"))
+                    pending.set_exception(RuntimeError(message))
+                elif frame.message_type == MessageType.STATUS and pending:
+                    if frame.request_id not in self._result_requests:
                         pending.set_result(data)
+                elif frame.message_type == MessageType.RESULT and pending:
+                    pending.set_result(data)
+                    await self._events.put(
+                        {
+                            "type": "answer.completed",
+                            "request_id": frame.request_id,
+                            **data,
+                        }
+                    )
                 elif frame.message_type == MessageType.RESULT:
                     event_type = (
                         "perception.completed"

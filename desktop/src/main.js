@@ -223,6 +223,12 @@ function updateTrayMenu() {
 function setScene(sceneValue) {
   const previousScene = state.scene;
   const scene = ["game", "course", "other"].includes(sceneValue) ? sceneValue : "other";
+  if (scene !== previousScene && petBubbleVisible) {
+    clearTimeout(bubbleTimer);
+    bubbleTimer = null;
+    petBubbleVisible = false;
+    send(petWindow, "jarvis:bubble", null);
+  }
   publishState({ scene });
   send(petWindow, "jarvis:pet-scene", scene);
   if (!state.monitoring) return;
@@ -246,6 +252,7 @@ function setScene(sceneValue) {
 function showBubble(effect) {
   if (state.scene === "game") return;
   clearTimeout(bubbleTimer);
+  const duration = effect.duration || Math.min(12000, Math.max(7000, effect.text.length * 180));
   petBubbleVisible = true;
   petWindow.showInactive();
   send(petWindow, "jarvis:bubble", effect);
@@ -254,13 +261,14 @@ function showBubble(effect) {
       petBubbleVisible = false;
       send(petWindow, "jarvis:bubble", null);
     },
-    effect.duration || 7000
+    duration
   );
 }
 
 function restoreCoursePet() {
   if (
     !activeCourseSessionId ||
+    state.scene !== "course" ||
     !state.monitoring ||
     state.screenBlocked ||
     !petWindow ||
@@ -321,7 +329,7 @@ async function toggleScreenPrivacy() {
     barrageWindow.hide();
     petWindow.showInactive();
     if (screenBlocked) {
-      showBubble({ text: "画面已屏蔽。好吧，我现在什么都看不见了。", tone: "privacy", duration: 7000 });
+      showBubble({ text: "你在干嘛？让我看看！！", tone: "privacy", duration: 7000 });
       schedulePrivacyMessage();
     } else {
       clearTimeout(privacyMessageTimer);
@@ -350,11 +358,11 @@ function handleBackendEvent(event) {
   }
   for (const effect of routeBackendEvent(event)) {
     if (effect.type === "scene") {
-      setScene(resolveDisplayScene(effect.scene, Boolean(activeCourseSessionId)));
+      setScene(resolveDisplayScene(effect.scene));
     }
     if (effect.type === "bubble" && !state.screenBlocked) showBubble(effect);
     if (effect.type === "barrage") {
-      if (state.scene !== "game" || state.screenBlocked || activeCourseSessionId) continue;
+      if (state.scene !== "game" || state.screenBlocked) continue;
       showBarrage(effect.text);
     }
     if (effect.type === "capture") captureKeyframe(effect);

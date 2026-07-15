@@ -939,7 +939,7 @@ root = "$(Convert-ToTomlPath (Join-Path $ProjectRoot 'memory'))"
 
 [interaction]
 ordinary_bubble_cooldown_seconds = 20.0
-course_bubble_cooldown_seconds = 90.0
+course_bubble_cooldown_seconds = 30.0
 game_barrage_repeat_seconds = 45.0
 game_barrage_similar_seconds = 8.0
 
@@ -947,7 +947,7 @@ game_barrage_similar_seconds = 8.0
 sessions_root = "$(Convert-ToTomlPath (Join-Path $ProjectRoot 'courses\sessions'))"
 keyframe_min_interval_seconds = 30
 max_keyframes = 40
-exit_grace_seconds = 45
+exit_grace_seconds = 90
 exit_samples = 4
 "@
     # Windows PowerShell 5.1 writes a BOM for -Encoding UTF8; tomllib rejects it.

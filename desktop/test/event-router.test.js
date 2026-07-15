@@ -25,15 +25,15 @@ test("course interaction uses the course bubble", () => {
   );
 });
 
-test("course completion returns to pet mode and exposes the output", () => {
+test("course completion preserves the current scene and exposes the output", () => {
   const effects = routeBackendEvent({
     topic: "course.finished",
     payload: { output_path: "C:/Users/test/Desktop/Jarvis-Courses/lesson/README.md" },
   });
-  assert.equal(effects[0].scene, "other");
-  assert.equal(effects[1].tone, "success");
-  assert.match(effects[1].text, /课程总结/);
-  assert.match(effects[1].outputPath, /README\.md$/);
+  assert.equal(effects.length, 1);
+  assert.equal(effects[0].tone, "success");
+  assert.match(effects[0].text, /课程总结/);
+  assert.match(effects[0].outputPath, /README\.md$/);
 });
 
 test("keyframe requests remain backend directed", () => {

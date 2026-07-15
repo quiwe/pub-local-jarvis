@@ -11,7 +11,10 @@ add_library(jarvis_worker_core STATIC
   src/worker.cpp
 )
 target_link_libraries(jarvis_worker_core PUBLIC jarvis::runtime_boundary)
-target_include_directories(jarvis_worker_core PUBLIC include)
+target_include_directories(jarvis_worker_core
+  PUBLIC include
+  PRIVATE "${PROJECT_SOURCE_DIR}/third_party/runtime/vendor/vendor"
+)
 target_compile_features(jarvis_worker_core PUBLIC cxx_std_20)
 target_compile_definitions(jarvis_worker_core PRIVATE $<$<BOOL:${WIN32}>:NOMINMAX;WIN32_LEAN_AND_MEAN>)
 if(MSVC)
@@ -26,6 +29,7 @@ if(TARGET jarvis::runtime_provider AND NOT JARVIS_ENABLE_STUB_RUNTIME)
 endif()
 
 if(WIN32)
+  target_link_libraries(jarvis_worker_core PRIVATE user32)
   add_library(jarvis_worker_windows STATIC
     src/windows/named_pipe_server.cpp
     src/windows/dxgi_capture.cpp

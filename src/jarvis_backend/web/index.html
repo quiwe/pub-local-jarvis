@@ -483,10 +483,6 @@
           addActivity("已生成游戏弹幕", true);
           return;
         }
-        if (event.topic === "course.note.recorded") {
-          addActivity(`已记录网课要点：${event.payload?.note || "新知识点"}`, true);
-          return;
-        }
         const labels = {
           "lifecycle.changed": "控制服务状态已更新",
           "scene.changed": "场景状态发生变化",

@@ -30,7 +30,7 @@ class Worker {
 #ifdef _WIN32
   bool start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
                         std::unique_ptr<IAudioCapture> audio,
-                        std::chrono::milliseconds interval = std::chrono::seconds(2));
+                        std::chrono::milliseconds interval = std::chrono::seconds(1));
   void stop_monitoring() noexcept;
 #endif
   [[nodiscard]] WorkerState state() const noexcept;
@@ -42,7 +42,9 @@ class Worker {
   LatestOnlyScheduler::Completion completion_{};
 #ifdef _WIN32
   struct RecentPerception {
+    std::string scene;
     std::string observation;
+    std::string course_transcript;
     std::vector<std::string> barrages;
   };
   std::unique_ptr<IDesktopCapture> desktop_{};
@@ -50,9 +52,17 @@ class Worker {
   std::jthread capture_thread_{};
   std::shared_ptr<const VideoFrame> latest_frame_{};
   std::shared_ptr<const std::vector<float>> latest_audio_{};
+  std::uint64_t active_perception_id_{};
+  bool active_perception_is_classification_{};
+  std::shared_ptr<const VideoFrame> active_perception_frame_{};
+  std::shared_ptr<const std::vector<float>> active_perception_audio_{};
+  std::uintptr_t latest_foreground_window_{};
+  std::uintptr_t active_perception_window_{};
+  std::atomic_bool reset_perception_audio_{false};
   std::deque<RecentPerception> recent_perceptions_{};
   std::string game_profile_name_{};
   std::string game_profile_prompt_{};
+  std::size_t game_barrage_angle_index_{};
   std::atomic_uint64_t observation_id_{std::uint64_t{1} << 63U};
 #endif
   mutable std::mutex mutex_{};

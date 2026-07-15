@@ -56,7 +56,15 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
       prompts_[request.id] = request.prompt;
     }
     changed_.notify_all();
-    return {request.id, request.prompt, false};
+    if (request.prompt.find("场景分类与非游戏内容生成器") != std::string::npos &&
+        request.prompt.find("不得生成游戏弹幕") != std::string::npos) {
+      return {request.id,
+              R"({"scene":"game","confidence":0.9,"observation":"玩家正在进行测试游戏"})",
+              false};
+    }
+    return {request.id,
+            R"({"scene":"game","confidence":0.9,"observation":"玩家正在进行测试游戏","barrage_candidates":["测试弹幕"],"course_transcript":"","course_note":"","course_title":"","course_interaction":"","capture_keyframe":false,"keyframe_note":"","assistant_candidates":[],"assistant_message":""})",
+            false};
   }
   void wait_request(std::uint64_t id) {
     std::unique_lock lock(mutex_);
@@ -67,19 +75,37 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
   }
   bool received_perception() {
     std::lock_guard lock(mutex_);
+    bool clean_classification = false;
+    bool profiled_game_generation = false;
+    for (const auto& [id, prompt] : prompts_) {
+      if (id < (std::uint64_t{1} << 63U)) continue;
+      if (prompt.find("不得生成游戏弹幕") != std::string::npos &&
+          prompt.find("场景判定") != std::string::npos &&
+          prompt.find("assistant_candidates") != std::string::npos &&
+          prompt.find("course_interaction") != std::string::npos &&
+          prompt.find("短暂静音") != std::string::npos &&
+          prompt.find("明确出现新的非课程主任务") != std::string::npos &&
+          prompt.find("<game_profile>") == std::string::npos &&
+          prompt.find("关注生存资源") == std::string::npos) {
+        clean_classification = true;
+      }
+      if (prompt.find("已经确认当前是 game") != std::string::npos &&
+          prompt.find("你不会再次收到截图或音频") != std::string::npos &&
+          prompt.find("必须生成恰好 3 条") != std::string::npos &&
+          prompt.find("冷却、去重和是否展示由后端负责") != std::string::npos &&
+          prompt.find("本轮游戏弹幕主角度") != std::string::npos &&
+          prompt.find("<game_profile>关注生存资源</game_profile>") != std::string::npos) {
+        profiled_game_generation = true;
+      }
+    }
+    return clean_classification && profiled_game_generation;
+  }
+  bool game_generation_is_text_only() {
+    std::lock_guard lock(mutex_);
     for (const auto& [id, prompt] : prompts_) {
       if (id >= (std::uint64_t{1} << 63U) &&
-          prompt.find("course_note") != std::string::npos &&
-          prompt.find("\"observation\"") != std::string::npos &&
-          prompt.find("普通上网与桌面场景") != std::string::npos &&
-          prompt.find("朋友测试") != std::string::npos &&
-          prompt.find("纯画面描述") != std::string::npos &&
-          prompt.find("画面基本不变") != std::string::npos &&
-          prompt.find("JARVIS") != std::string::npos &&
-          prompt.find("不得覆盖通用游戏规则") != std::string::npos &&
-          prompt.find("<game_profile>关注生存资源</game_profile>") != std::string::npos) {
-        return true;
-      }
+          prompt.find("已经确认当前是 game") != std::string::npos &&
+          contexts_.contains(id) && !contexts_[id]) return true;
     }
     return false;
   }
@@ -171,9 +197,14 @@ int main() {
           "monitoring starts with capture devices");
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
   require(recording_ptr->received_perception(), "monitoring schedules structured perception");
+  require(recording_ptr->game_generation_is_text_only(),
+          "game generation does not resend classification media");
   worker.submit_prompt(21, "describe context");
   recording_ptr->wait_request(21);
   require(recording_ptr->had_context(21), "interactive prompt includes latest capture context");
+  worker.submit_prompt(23, "[[JARVIS_TEXT_ONLY]]\nsummarize transcript");
+  recording_ptr->wait_request(23);
+  require(!recording_ptr->had_context(23), "text-only prompt excludes capture context");
   worker.stop_monitoring();
   worker.submit_prompt(22, "text only");
   recording_ptr->wait_request(22);

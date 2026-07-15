@@ -46,7 +46,7 @@ class BarrageSettings(BaseModel):
 
 class InteractionSettings(BaseModel):
     ordinary_bubble_cooldown_seconds: float = Field(default=20.0, ge=0)
-    course_bubble_cooldown_seconds: float = Field(default=90.0, ge=0)
+    course_bubble_cooldown_seconds: float = Field(default=30.0, ge=0)
     game_barrage_repeat_seconds: float = Field(default=45.0, ge=0)
     game_barrage_similar_seconds: float = Field(default=8.0, ge=0)
 
@@ -60,7 +60,7 @@ class CourseSettings(BaseModel):
     output_root: Path | None = None
     keyframe_min_interval_seconds: float = Field(default=30.0, ge=0)
     max_keyframes: int = Field(default=40, ge=1, le=200)
-    exit_grace_seconds: float = Field(default=45.0, ge=0)
+    exit_grace_seconds: float = Field(default=90.0, ge=0)
     exit_samples: int = Field(default=4, ge=1)
 
 

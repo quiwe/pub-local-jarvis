@@ -70,8 +70,8 @@ npm start
 
 桌面端只消费 `/ws/events` 的后端事件：
 
-- `assistant.message` 显示普通场景气泡，应用或内容切换时会主动互动，默认冷却 20 秒；
-- `course.interaction` 显示网课陪伴气泡，默认冷却 90 秒；
+- `assistant.message` 仅在有可靠新进展时显示 8 至 30 字的趣味短句，并以“主人”称呼使用者，默认冷却 20 秒；
+- `course.interaction` 显示网课陪伴气泡，默认冷却 30 秒；
 - `barrage.generated` 在游戏场景显示弹幕；
 - `course.keyframe.requested` 触发一次缩放后的屏幕截图并回传课程接口；
 - `course.finished` 显示课程总结已生成，并可打开输出位置。
@@ -129,8 +129,8 @@ MVP 是文本输出，不需要 TTS、projector、Token2Wav 或参考音色文�
 - 普通运行不应持久化原始屏幕和音频。
 - 记忆默认写到 `memory/`，课程工作文件写到 `courses/sessions/`，二者均被 `.gitignore` 排除。
 - 课程关键帧只有被课程流程选中时才写盘。
-- 自动课程需连续离开课程至少 45 秒且达到 4 次感知样本后才会结束，短暂遮挡或误判不会拆分课程。
-- 课程成品只展示清洗、去重后的核心知识点和关键画面说明；内部转写及截图来源元数据不会写入成品 Markdown。
+- 网课显示状态需连续 3 次判为非课程才会退出；课程记录会话需持续离课至少 90 秒且达到 4 次感知样本才会结束，APP 重启会继续未完成会话，因此短暂误判不会拆分课程。
+- 实时阶段只记录授课语音转写和视觉模型选出的关键画面；课程结束后，后端基于整节课转写统一生成一次最终课程总结。内部转写及截图来源元数据不会写入成品 Markdown。
 - 未配置课程输出目录时，最终工件写到 Windows Known Folder Desktop 下的 `Jarvis-Courses/<session-id>/`，其中包含 `README.md` 和 `images/`。
 - 暂停监控会停止采集线程并清空 worker 持有的采集对象。
 

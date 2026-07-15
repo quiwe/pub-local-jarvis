@@ -1,8 +1,7 @@
 "use strict";
 
-function resolveDisplayScene(reportedScene, courseActive) {
-  const scene = ["game", "course", "other"].includes(reportedScene) ? reportedScene : "other";
-  return courseActive ? "course" : scene;
+function resolveDisplayScene(reportedScene) {
+  return ["game", "course", "other"].includes(reportedScene) ? reportedScene : "other";
 }
 
 module.exports = { resolveDisplayScene };

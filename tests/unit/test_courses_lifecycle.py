@@ -7,6 +7,7 @@ def test_course_lifecycle_exact_frames_and_markdown(tmp_path):
     repository = CourseRepository(tmp_path / "sessions")
     session = repository.create("Python Lesson", session_id="lesson-1")
     session.append_transcript("Install Python.", summarizer=lambda old, new: old + new.strip())
+    session.update_summary("- Install Python before creating the environment.")
     frame = b"\x89PNG\r\n\x1a\nexact-payload"
     item = session.add_keyframe(
         frame,
@@ -18,9 +19,9 @@ def test_course_lifecycle_exact_frames_and_markdown(tmp_path):
     output = session.finalize(tmp_path / "courses")
     rendered = output.read_text(encoding="utf-8")
     assert "# Python Lesson" in rendered
-    assert "Install Python." in rendered
+    assert "Install Python before creating the environment." in rendered
     assert "1.234s" in rendered
-    assert "核心知识点" in rendered
+    assert "课程总结" in rendered
     assert "画面说明" in rendered
     assert "Metadata:" not in rendered
     assert "electron-desktop" not in rendered
