@@ -255,6 +255,92 @@ void Worker::set_game_profile(std::string name, std::string prompt) {
   recent_perceptions_.clear();
 }
 #ifdef _WIN32
+bool Worker::start_duplex(std::string session_id, std::string instruction) {
+  if (session_id.empty() || instruction.empty() || instruction.size() > 8000 ||
+      instruction.find('\0') != std::string::npos || !capture_thread_.joinable()) return false;
+  stop_duplex();
+  if (!runtime_->start_duplex(instruction)) return false;
+  {
+    std::lock_guard lock(mutex_);
+    duplex_session_id_ = std::move(session_id);
+    pending_duplex_frame_.reset();
+  }
+  duplex_sequence_.store(0);
+  duplex_task_active_.store(true);
+  try {
+    duplex_input_thread_ = std::jthread([this](std::stop_token stop) {
+    while (!stop.stop_requested()) {
+      std::optional<DuplexFrame> frame;
+      {
+        std::unique_lock lock(mutex_);
+        duplex_input_ready_.wait(lock, stop, [this] {
+          return pending_duplex_frame_.has_value() || !duplex_task_active_.load();
+        });
+        if (stop.stop_requested() || !duplex_task_active_.load()) break;
+        frame = std::move(pending_duplex_frame_);
+        pending_duplex_frame_.reset();
+      }
+      if (frame && !runtime_->push_duplex(std::move(*frame))) {
+        nlohmann::json event{{"native_event", "duplex.failed"},
+                             {"reason", "frame_submit_failed"}};
+        emit_monitoring_event(event.dump());
+      }
+    }
+    });
+    duplex_result_thread_ = std::jthread([this](std::stop_token stop) {
+    while (!stop.stop_requested() && duplex_task_active_.load()) {
+      const auto result = runtime_->wait_duplex(std::chrono::milliseconds(200));
+      if (!result) continue;
+      std::string session_id;
+      {
+        std::lock_guard lock(mutex_);
+        session_id = duplex_session_id_;
+      }
+      nlohmann::json event{{"native_event", "duplex.decision"},
+                           {"session_id", session_id},
+                           {"sequence", result->sequence},
+                           {"ok", result->ok},
+                           {"decision", result->is_speak ? "speak" : "listen"},
+                           {"text", result->is_speak ? result->text : std::string{}},
+                           {"latency_ms", result->latency_ms}};
+      emit_monitoring_event(event.dump());
+    }
+    });
+  } catch (...) {
+    stop_duplex();
+    return false;
+  }
+  nlohmann::json event{{"native_event", "duplex.started"},
+                       {"session_id", duplex_session_id_}};
+  emit_monitoring_event(event.dump());
+  return true;
+}
+
+void Worker::stop_duplex() noexcept {
+  const bool was_active = duplex_task_active_.exchange(false);
+  duplex_input_ready_.notify_all();
+  if (duplex_input_thread_.joinable()) {
+    duplex_input_thread_.request_stop();
+  }
+  if (duplex_result_thread_.joinable()) {
+    duplex_result_thread_.request_stop();
+  }
+  if (duplex_input_thread_.joinable()) duplex_input_thread_.join();
+  if (duplex_result_thread_.joinable()) duplex_result_thread_.join();
+  runtime_->stop_duplex();
+  std::string session_id;
+  {
+    std::lock_guard lock(mutex_);
+    session_id = std::move(duplex_session_id_);
+    pending_duplex_frame_.reset();
+  }
+  if (was_active) {
+    nlohmann::json event{{"native_event", "duplex.stopped"},
+                         {"session_id", session_id}};
+    emit_monitoring_event(event.dump());
+  }
+}
+
 bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
                               std::unique_ptr<IAudioCapture> audio_capture,
                               std::chrono::milliseconds interval) {
@@ -372,6 +458,18 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
                             recent_perceptions_.back().scene == "course";
           }
           const bool active_course_audio = course_active && audio_active;
+          if (duplex_task_active_.load()) {
+            auto duplex_audio = std::make_shared<std::vector<float>>(
+                latest_audio_window->end() - 16'000, latest_audio_window->end());
+            {
+              std::lock_guard lock(mutex_);
+              pending_duplex_frame_ = DuplexFrame{
+                  .sequence = duplex_sequence_.fetch_add(1) + 1,
+                  .frame = frame,
+                  .audio_16khz_mono = std::move(duplex_audio)};
+            }
+            duplex_input_ready_.notify_one();
+          }
           if (visually_changed || active_course_audio) {
             last_visual_change = now;
             next_idle_reminder = now + kIdleReminderAfter;
@@ -464,6 +562,7 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
   return true;
 }
 void Worker::stop_monitoring() noexcept {
+  stop_duplex();
   if (capture_thread_.joinable()) { capture_thread_.request_stop(); capture_thread_.join(); }
   std::unique_ptr<IDesktopCapture> desktop; std::unique_ptr<IAudioCapture> audio_capture;
   {

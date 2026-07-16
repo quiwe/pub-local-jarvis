@@ -4,6 +4,7 @@ const $ = selector => document.querySelector(selector);
 const startButton = $("#start-button");
 const pauseButton = $("#pause-button");
 const phaseChip = $("#phase-chip");
+const phaseChipLabel = phaseChip.querySelector("span");
 const statusTitle = $("#status-title");
 const statusDetail = $("#status-detail");
 const monitorValue = $("#monitor-value");
@@ -17,6 +18,7 @@ const profileName = $("#profile-name");
 const profilePrompt = $("#profile-prompt");
 const profileDelete = $("#profile-delete");
 const profileError = $("#profile-error");
+const profilePromptCount = $("#profile-prompt-count");
 const memoryDocument = $("#memory-document");
 const memoryDays = $("#memory-days");
 const memoryState = $("#memory-state");
@@ -26,6 +28,8 @@ let currentView = "overview";
 let currentMemoryDay = "";
 let today = "";
 let gameProfiles = [];
+let editingProfileId = "";
+let persistedProfileIds = new Set();
 
 const sceneNames = { game: "游戏", course: "网课", other: "其他" };
 const phaseView = {
@@ -68,7 +72,7 @@ function render(state) {
   currentPhase = phase;
   const [chip, title, detail] = phaseView[phase];
   document.body.className = `phase-${phase}`;
-  phaseChip.textContent = chip;
+  phaseChipLabel.textContent = chip;
   phaseChip.className = `phase-chip${phase === "running" ? " online" : phase === "error" ? " error" : ""}`;
   statusTitle.textContent = title;
   statusDetail.textContent = state.error || detail;
@@ -94,8 +98,16 @@ function render(state) {
 
 function switchView(name) {
   currentView = name;
-  document.querySelectorAll(".view-tab").forEach(tab => tab.classList.toggle("active", tab.dataset.view === name));
-  document.querySelectorAll(".app-view").forEach(view => view.classList.toggle("active", view.id === `${name}-view`));
+  document.querySelectorAll(".view-tab").forEach(tab => {
+    const active = tab.dataset.view === name;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+  });
+  document.querySelectorAll(".app-view").forEach(view => {
+    const active = view.id === `${name}-view`;
+    view.classList.toggle("active", active);
+    view.setAttribute("aria-hidden", String(!active));
+  });
   if (name === "memory") {
     memoryDot.hidden = true;
     refreshMemory();
@@ -241,8 +253,32 @@ document.querySelectorAll(".view-tab").forEach(tab => tab.addEventListener("clic
 $("#memory-refresh").addEventListener("click", refreshMemory);
 $("#memory-generate").addEventListener("click", () => generateMemory(today));
 
-function renderProfileEditor(settings) {
+function updateProfilePromptCount() {
+  profilePromptCount.textContent = `${profilePrompt.value.length} / 8000`;
+}
+
+function setProfileDirty(dirty) {
+  profileForm.classList.toggle("is-dirty", dirty);
+  profileError.classList.toggle("neutral", dirty);
+  profileError.textContent = dirty ? "有未保存的更改" : "";
+}
+
+function renderProfileDraft(id) {
+  const profile = gameProfiles.find(item => item.id === id) || gameProfiles[0];
+  if (!profile) return;
+  editingProfileId = profile.id;
+  profileSelect.value = profile.id;
+  profileName.value = profile.name;
+  profilePrompt.value = profile.prompt;
+  profileDelete.disabled = profile.builtIn;
+  updateProfilePromptCount();
+  setProfileDirty(false);
+  refreshIcons();
+}
+
+function renderProfileEditor(settings, syncPersisted = true) {
   gameProfiles = settings.profiles;
+  if (syncPersisted) persistedProfileIds = new Set(gameProfiles.map(profile => profile.id));
   profileSelect.replaceChildren(...gameProfiles.map(profile => {
     const option = document.createElement("option");
     option.value = profile.id;
@@ -250,34 +286,66 @@ function renderProfileEditor(settings) {
     option.selected = profile.id === settings.selectedId;
     return option;
   }));
-  const profile = gameProfiles.find(item => item.id === profileSelect.value) || gameProfiles[0];
-  profileName.value = profile.name;
-  profilePrompt.value = profile.prompt;
-  profileDelete.disabled = profile.builtIn;
-  profileError.textContent = "";
-  refreshIcons();
+  renderProfileDraft(settings.selectedId);
+}
+
+function closeProfileDialog() {
+  if (profileForm.classList.contains("is-dirty") && !window.confirm("放弃尚未保存的更改？")) return;
+  profileDialog.close();
 }
 
 $("#game-profile-button").addEventListener("click", async () => {
   renderProfileEditor(await window.jarvis.getGameProfiles());
   profileDialog.showModal();
 });
-$("#profile-close").addEventListener("click", () => profileDialog.close());
-profileSelect.addEventListener("change", async () => renderProfileEditor(await window.jarvis.selectGameProfile(profileSelect.value)));
+$("#profile-close").addEventListener("click", closeProfileDialog);
+profileSelect.addEventListener("change", () => {
+  const nextId = profileSelect.value;
+  if (profileForm.classList.contains("is-dirty") && !window.confirm("放弃当前方案的未保存修改？")) {
+    profileSelect.value = editingProfileId;
+    return;
+  }
+  renderProfileDraft(nextId);
+});
 $("#profile-add").addEventListener("click", () => {
   const id = `custom-${Date.now()}`;
   gameProfiles.push({ id, name: "新游戏", prompt: "结合当前游戏画面，给出简短、准确、自然的陪伴弹幕。", builtIn: false });
-  renderProfileEditor({ selectedId: id, profiles: gameProfiles });
+  renderProfileEditor({ selectedId: id, profiles: gameProfiles }, false);
+  setProfileDirty(true);
   profileName.select();
 });
-profileDelete.addEventListener("click", async () => renderProfileEditor(await window.jarvis.deleteGameProfile(profileSelect.value)));
+profileDelete.addEventListener("click", async () => {
+  const profile = gameProfiles.find(item => item.id === profileSelect.value);
+  if (!profile || profile.builtIn || !window.confirm(`删除“${profile.name}”方案？`)) return;
+  if (!persistedProfileIds.has(profile.id)) {
+    gameProfiles = gameProfiles.filter(item => item.id !== profile.id);
+    renderProfileEditor({ selectedId: gameProfiles[0].id, profiles: gameProfiles }, false);
+    return;
+  }
+  renderProfileEditor(await window.jarvis.deleteGameProfile(profile.id));
+});
+profileName.addEventListener("input", () => setProfileDirty(true));
+profilePrompt.addEventListener("input", () => {
+  updateProfilePromptCount();
+  setProfileDirty(true);
+});
 profileForm.addEventListener("submit", async event => {
   event.preventDefault();
   try {
     renderProfileEditor(await window.jarvis.saveGameProfile({ id: profileSelect.value, name: profileName.value, prompt: profilePrompt.value }));
     addLog(`已选用《${profileName.value.trim()}》游戏方案`);
     profileDialog.close();
-  } catch (error) { profileError.textContent = error.message; }
+  } catch (error) {
+    profileError.classList.remove("neutral");
+    profileError.textContent = error.message;
+  }
+});
+profileDialog.addEventListener("cancel", event => {
+  event.preventDefault();
+  closeProfileDialog();
+});
+profileDialog.addEventListener("click", event => {
+  if (event.target === profileDialog) closeProfileDialog();
 });
 
 window.jarvis.onState(render);

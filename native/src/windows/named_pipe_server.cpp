@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <cstring>
 #include <mutex>
+#include <span>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 namespace jarvis::win {
@@ -99,9 +101,29 @@ int NamedPipeServer::run() {
         impl_->worker.set_game_profile(value.substr(0, separator),
                                        separator == std::string::npos ? "" : value.substr(separator + 1));
       }
+      if (type == ipc::MessageType::start_duplex) {
+        std::string value(reinterpret_cast<const char*>(decoded.message.payload.data()),
+                          decoded.message.payload.size());
+        const auto separator = value.find('\0');
+        const auto session_id = value.substr(0, separator);
+        const auto instruction = separator == std::string::npos ? std::string{} :
+                                                                    value.substr(separator + 1);
+        if (!impl_->worker.start_duplex(session_id, instruction)) {
+          constexpr std::string_view error =
+              R"({"error":"unable to start duplex task; monitoring must be active and enough GPU memory must be available"})";
+          const auto payload = std::span<const std::byte>(
+              reinterpret_cast<const std::byte*>(error.data()), error.size());
+          const auto response = ipc::encode(ipc::MessageType::error, id, payload);
+          std::lock_guard lock(impl_->write_mutex);
+          write_exact(impl_->pipe, response.data(), response.size());
+          continue;
+        }
+      }
+      if (type == ipc::MessageType::stop_duplex) impl_->worker.stop_duplex();
       if (type == ipc::MessageType::hello || type == ipc::MessageType::start ||
           type == ipc::MessageType::stop || type == ipc::MessageType::cancel ||
-          type == ipc::MessageType::submit || type == ipc::MessageType::configure_game) {
+          type == ipc::MessageType::submit || type == ipc::MessageType::configure_game ||
+          type == ipc::MessageType::start_duplex || type == ipc::MessageType::stop_duplex) {
         const auto response = ipc::encode(ipc::MessageType::status, id, {});
         std::lock_guard lock(impl_->write_mutex);
         if (!write_exact(impl_->pipe, response.data(), response.size())) break;

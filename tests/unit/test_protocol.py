@@ -75,6 +75,16 @@ def test_native_monitoring_event_envelope_is_decoded() -> None:
         )
         is None
     )
+
+
+def test_duplex_commands_keep_protocol_v1_compatible() -> None:
+    start = encode_frame(Frame(MessageType.START_DUPLEX, request_id=8, payload=b"task"))
+    stop = encode_frame(Frame(MessageType.STOP_DUPLEX, request_id=9))
+
+    assert decode_frame(start).message_type == MessageType.START_DUPLEX
+    assert decode_frame(stop).message_type == MessageType.STOP_DUPLEX
+    assert int(MessageType.START_DUPLEX) == 11
+    assert int(MessageType.STOP_DUPLEX) == 12
     assert (
         NamedPipeNativeClient._parse_native_event(
             0xFFFFFFFFFFFFFFFF, {"text": "ordinary result"}

@@ -10,6 +10,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <deque>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -67,6 +68,41 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
             R"({"scene":"game","confidence":0.9,"observation":"玩家正在进行测试游戏","barrage_candidates":["测试弹幕"],"course_transcript":"","course_note":"","course_title":"","course_interaction":"","capture_keyframe":false,"keyframe_note":"","assistant_candidates":[],"assistant_message":""})",
             false};
   }
+  bool start_duplex(std::string instruction) override {
+    std::lock_guard lock(mutex_);
+    duplex_instruction_ = std::move(instruction);
+    duplex_active_ = true;
+    return true;
+  }
+  void stop_duplex() noexcept override {
+    {
+      std::lock_guard lock(mutex_);
+      duplex_active_ = false;
+    }
+    changed_.notify_all();
+  }
+  bool duplex_active() const noexcept override { return duplex_active_.load(); }
+  bool push_duplex(jarvis::DuplexFrame frame) override {
+    std::lock_guard lock(mutex_);
+    if (!duplex_active_) return false;
+    duplex_had_context_ = bool(frame.frame) && bool(frame.audio_16khz_mono) &&
+                          frame.audio_16khz_mono->size() == 16'000;
+    duplex_results_.push_back({frame.sequence, true, frame.sequence == 2,
+                               frame.sequence == 2 ? "测试条件已满足" : "", 5.0});
+    changed_.notify_all();
+    return true;
+  }
+  std::optional<jarvis::DuplexResult> wait_duplex(
+      std::chrono::milliseconds timeout) override {
+    std::unique_lock lock(mutex_);
+    changed_.wait_for(lock, timeout, [&] {
+      return !duplex_results_.empty() || !duplex_active_;
+    });
+    if (duplex_results_.empty()) return std::nullopt;
+    auto result = std::move(duplex_results_.front());
+    duplex_results_.pop_front();
+    return result;
+  }
   void wait_request(std::uint64_t id) {
     std::unique_lock lock(mutex_);
     changed_.wait_for(lock, std::chrono::seconds(2), [&] { return contexts_.contains(id); });
@@ -116,10 +152,18 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
       return item.first >= (std::uint64_t{1} << 63U);
     });
   }
+  bool received_duplex_context() {
+    std::lock_guard lock(mutex_);
+    return duplex_had_context_ && duplex_instruction_.find("绿灯") != std::string::npos;
+  }
  private:
   bool ready_{};
   std::unordered_map<std::uint64_t, bool> contexts_;
   std::unordered_map<std::uint64_t, std::string> prompts_;
+  std::deque<jarvis::DuplexResult> duplex_results_;
+  std::string duplex_instruction_;
+  std::atomic_bool duplex_active_{false};
+  bool duplex_had_context_{};
   std::mutex mutex_; std::condition_variable changed_;
 };
 class TestDesktopCapture final : public jarvis::IDesktopCapture {
@@ -233,6 +277,14 @@ int main() {
           "unchanged frames do not schedule repeated perception");
   require(recording_ptr->game_generation_is_text_only(),
           "game generation does not resend classification media");
+  require(worker.start_duplex("traffic-light", "持续观察画面，绿灯亮起时提醒我"),
+          "duplex task starts while monitoring remains active");
+  std::this_thread::sleep_for(std::chrono::milliseconds(40));
+  require(recording_ptr->received_duplex_context(),
+          "duplex task receives one-second audio and current frame");
+  require(recording_ptr->perception_request_count() == 2,
+          "duplex task does not replace structured perception");
+  worker.stop_duplex();
   worker.submit_prompt(21, "describe context");
   recording_ptr->wait_request(21);
   require(recording_ptr->had_context(21), "interactive prompt includes latest capture context");

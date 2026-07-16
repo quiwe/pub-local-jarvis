@@ -28,6 +28,8 @@ class MessageType(IntEnum):
     ERROR = 8
     SHUTDOWN = 9
     CONFIGURE_GAME = 10
+    START_DUPLEX = 11
+    STOP_DUPLEX = 12
 
 
 @dataclass(frozen=True, slots=True)

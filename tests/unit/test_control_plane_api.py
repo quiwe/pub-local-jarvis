@@ -797,6 +797,148 @@ def test_ordinary_bubble_default_cooldown_is_twenty_seconds(tmp_path):
         ]
 
 
+def test_monitoring_automatically_manages_ambient_duplex(tmp_path):
+    with make_client(tmp_path) as client:
+        native = client.app.state.orchestrator.native_client
+        requests = []
+        original_request = native.request
+
+        async def record_request(method, payload):
+            requests.append((method, payload))
+            return await original_request(method, payload)
+
+        native.request = record_request
+
+        started = client.post(
+            "/api/v1/commands",
+            json={"command": "start_monitoring", "arguments": {}},
+        )
+        assert started.status_code == 200
+        assert [method for method, _ in requests[-2:]] == [
+            "start_monitoring",
+            "start_duplex",
+        ]
+        status = client.get("/api/v1/duplex").json()
+        assert status["active"] is True
+        assert status["session_id"] == "jarvis-ambient"
+        assert "默认保持安静" in status["instruction"]
+
+        paused = client.post(
+            "/api/v1/commands",
+            json={"command": "pause_monitoring", "arguments": {}},
+        )
+        assert paused.status_code == 200
+        assert requests[-1][0] == "pause_monitoring"
+        assert client.get("/api/v1/duplex").json()["active"] is False
+
+        resumed = client.post(
+            "/api/v1/commands",
+            json={"command": "resume_monitoring", "arguments": {}},
+        )
+        assert resumed.status_code == 200
+        assert [method for method, _ in requests[-2:]] == [
+            "resume_monitoring",
+            "start_duplex",
+        ]
+
+
+def test_duplex_model_speak_routing_and_compatibility_api(tmp_path):
+    with make_client(tmp_path) as client:
+        native = client.app.state.orchestrator.native_client
+
+        assert client.get("/api/v1/duplex").json() == {
+            "active": False,
+            "session_id": None,
+            "instruction": "",
+        }
+        started = client.post(
+            "/api/v1/duplex",
+            json={
+                "session_id": "traffic-light",
+                "instruction": "持续观察画面，绿灯亮起时提醒我。",
+            },
+        )
+        assert started.status_code == 200
+        assert started.json() == {
+            "active": True,
+            "session_id": "traffic-light",
+            "instruction": "持续观察画面，绿灯亮起时提醒我。",
+        }
+
+        client.portal.call(
+            native.emit,
+            {
+                "type": "duplex.decision",
+                "session_id": "traffic-light",
+                "sequence": 1,
+                "ok": True,
+                "decision": "listen",
+                "text": "",
+            },
+        )
+        client.portal.call(
+            native.emit,
+            {
+                "type": "duplex.decision",
+                "session_id": "traffic-light",
+                "sequence": 2,
+                "ok": True,
+                "decision": "speak",
+                "text": "绿灯亮了，可以通行。",
+            },
+        )
+        client.portal.call(
+            native.emit,
+            {
+                "type": "duplex.decision",
+                "session_id": "traffic-light",
+                "sequence": 3,
+                "ok": True,
+                "decision": "speak",
+                "text": "绿灯亮了，可以通行。",
+            },
+        )
+        time.sleep(0.03)
+
+        events = client.get("/api/v1/events").json()
+        decisions = [event for event in events if event["topic"] == "duplex.decision"]
+        messages = [
+            event["payload"]
+            for event in events
+            if event["topic"] == "assistant.message"
+            and event["payload"].get("source") == "duplex"
+        ]
+        assert [event["payload"]["decision"] for event in decisions] == [
+            "listen",
+            "speak",
+            "speak",
+        ]
+        assert messages == [
+            {
+                "text": "绿灯亮了，可以通行。",
+                "source": "duplex",
+                "session_id": "traffic-light",
+            }
+        ]
+
+        stopped = client.delete("/api/v1/duplex")
+        assert stopped.status_code == 200
+        assert stopped.json() == {
+            "active": False,
+            "session_id": None,
+            "instruction": "",
+        }
+
+
+def test_duplex_task_rejects_empty_instruction(tmp_path):
+    with make_client(tmp_path) as client:
+        response = client.post("/api/v1/duplex", json={"instruction": "   "})
+        control = client.post("/api/v1/duplex", json={"instruction": "watch\u0000now"})
+
+        assert response.status_code == 422
+        assert control.status_code == 422
+
+
 def test_perception_keeps_internal_observation_separate_from_bubble_text():
     result = create_app().state.orchestrator._parse_perception(
         '{"scene":"other","confidence":0.9,'

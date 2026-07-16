@@ -37,7 +37,10 @@ app.whenReady().then(async () => {
   }));
   ipcMain.handle("jarvis:get-game-profiles", () => ({
     selectedId: "minecraft",
-    profiles: [{ id: "minecraft", name: "我的世界", prompt: "关注生存、建造、探索与战斗。", builtIn: true }],
+    profiles: [
+      { id: "minecraft", name: "我的世界", prompt: "关注生存、建造、探索与战斗。", builtIn: true },
+      { id: "custom-demo", name: "星际探索", prompt: "关注资源、航线与舰队状态。", builtIn: false },
+    ],
   }));
   ipcMain.handle("jarvis:open-output", () => null);
   ipcMain.handle("jarvis:memory-status", () => ({
@@ -65,7 +68,20 @@ app.whenReady().then(async () => {
     phase: "running", monitoring: true, screenBlocked: true,
   }));
 
-  await capture("launcher", { width: 520, height: 760, useContentSize: true }, "launcher.html");
+  await capture(
+    "launcher",
+    { width: 520, height: 760, useContentSize: true },
+    "launcher.html",
+    async window => {
+      const layout = await window.webContents.executeJavaScript(`(() => {
+        const view = document.querySelector('#overview-view .view-scroll');
+        return { scrollHeight: view.scrollHeight, clientHeight: view.clientHeight };
+      })()`);
+      if (layout.scrollHeight > layout.clientHeight + 1) {
+        throw new Error(`overview default layout overflow: ${JSON.stringify(layout)}`);
+      }
+    }
+  );
   await capture(
     "launcher-memory",
     { width: 520, height: 760, useContentSize: true },
@@ -103,8 +119,21 @@ app.whenReady().then(async () => {
     async window => {
       await window.webContents.executeJavaScript("document.querySelector('#game-profile-button').click()");
       await new Promise(resolve => setTimeout(resolve, 150));
-      const visible = await window.webContents.executeJavaScript("document.querySelector('#game-profile-dialog').open");
-      if (!visible) throw new Error("game profile dialog did not open");
+      const state = await window.webContents.executeJavaScript(`(() => {
+        const select = document.querySelector('#profile-select');
+        select.value = 'custom-demo';
+        select.dispatchEvent(new Event('change'));
+        const bounds = document.querySelector('#game-profile-dialog').getBoundingClientRect();
+        return {
+          visible: document.querySelector('#game-profile-dialog').open,
+          name: document.querySelector('#profile-name').value,
+          count: document.querySelector('#profile-prompt-count').textContent,
+          inViewport: bounds.top >= 0 && bounds.bottom <= innerHeight,
+        };
+      })()`);
+      if (!state.visible || !state.inViewport || state.name !== "星际探索" || !state.count.includes("13 / 8000")) {
+        throw new Error(`game profile editor failed: ${JSON.stringify(state)}`);
+      }
     }
   );
   await capture(

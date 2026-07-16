@@ -21,6 +21,7 @@ Windows 本地优先的 AI 贾维斯应用。核心能力由后端提供，Elect
 - 感知前置画面变化检测；静止、静音 10 分钟后提醒，提醒间隔不少于 15 分钟。
 - 课程会话、转写、关键帧、可恢复 Markdown 输出及 Windows Known Folder Desktop 定位。
 - 普通场景按需气泡提醒、网课场景低频陪伴气泡、游戏场景桌宠隐藏与点击穿透弹幕层。
+- 无 TTS 原生全双工感知：随持续感知自动运行，模型每秒自主选择 LISTEN/SPEAK，仅在有明确且有用的信息时显示文字气泡。
 - 网课自动开始/结束记录，并导出 `README.md` 和 `images/` 到桌面的独立课程文件夹。
 - 独立、固定提交且 SHA-256 验证的第三方运行时源码快照，以及 MiniCPM-o 模型布局校验。
 
@@ -88,6 +89,8 @@ npm run build
 
 主要 API 前缀为 `/api/v1`，包括健康、命令、场景、弹幕、记忆和课程接口。每日记忆通过 `/memory/days` 查询，并通过 `/memory/days/{date}/generate` 调用本地模型归并时间段、生成或刷新。事件 WebSocket 为 `/ws/events`。
 
+原生全双工会话随持续感知自动启动、暂停和恢复，无需用户配置观察任务。底层 `GET/POST/DELETE /api/v1/duplex` 保留用于兼容和诊断。实现、资源边界和验收方法见 [原生全双工模式](FULL_DUPLEX_MODE.md)。
+
 设置 `server.bearer_token` 后，HTTP 使用 `Authorization: Bearer <token>`；WebSocket 可使用同一请求头或 `?token=<token>`。
 
 ## Native 构建
@@ -141,11 +144,10 @@ MVP 是文本输出，不需要 TTS、projector、Token2Wav 或参考音色文�
 
 ## 已知验证边界
 
-本开发环境没有 CMake、MSVC、GCC 或 Clang，因此本轮无法实际编译 Windows C++ worker，也无法执行 DXGI/WASAPI 真实采集或 CUDA/MiniCPM-o GPU 验证。Python 的单元测试、Ruff 和 mypy 已通过。完整发布前仍必须在 NVIDIA Windows 机器上完成：
+当前已在 Windows、MSVC、CUDA 13.1 和 RTX 5070 Ti Laptop GPU 上完成 stub/real provider 编译、CTest、DXGI/WASAPI 采集以及全双工生命周期和事件路由验证。完整发布前仍必须完成真实模型的 LISTEN/SPEAK 语义验收，以及：
 
-1. native 编译与 CTest；
-2. 30 分钟屏幕/音频 soak；
-3. 设备切换、锁屏、显示器重配恢复；
-4. 真实 LLM/VPM/APM provider、KV 滑窗和 500 个切片稳定性；
-5. 课程录屏到桌面 Markdown/关键帧的产品级 E2E；
-6. 删除 `others/` 后的干净构建验证。
+1. 30 分钟屏幕/音频和全双工会话 soak；
+2. 设备切换、锁屏、显示器重配恢复；
+3. KV 滑窗和 500 个连续时间片稳定性；
+4. 课程录屏到桌面 Markdown/关键帧的产品级 E2E；
+5. 删除 `others/` 后的干净构建验证。

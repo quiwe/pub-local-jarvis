@@ -9,71 +9,106 @@
 </head>
 <body>
   <main class="control-shell">
-    <header class="brand-bar">
+    <header class="app-header">
       <div class="brand-lockup">
         <div class="brand-mark" aria-hidden="true"><span>J</span></div>
-        <div><p class="eyebrow">LOCAL DESKTOP INTELLIGENCE</p><h1>AI 贾维斯</h1></div>
+        <div class="brand-copy">
+          <h1>AI 贾维斯</h1>
+          <p>本地桌面智能</p>
+        </div>
       </div>
-      <span id="phase-chip" class="phase-chip">待启动</span>
+
+      <nav class="view-tabs" aria-label="主视图">
+        <button id="overview-tab" class="view-tab active" data-view="overview" type="button" aria-controls="overview-view" aria-selected="true">
+          <i data-lucide="activity"></i><span>概览</span>
+        </button>
+        <button id="memory-tab" class="view-tab" data-view="memory" type="button" aria-controls="memory-view" aria-selected="false">
+          <i data-lucide="notebook-tabs"></i><span>记忆</span><b id="memory-dot" hidden></b>
+        </button>
+      </nav>
+
+      <span id="phase-chip" class="phase-chip"><i aria-hidden="true"></i><span>待启动</span></span>
     </header>
 
-    <nav class="view-tabs" aria-label="主视图">
-      <button class="view-tab active" data-view="overview" type="button"><i data-lucide="activity"></i><span>概览</span></button>
-      <button class="view-tab" data-view="memory" type="button"><i data-lucide="notebook-tabs"></i><span>记忆</span><b id="memory-dot" hidden></b></button>
-    </nav>
-
     <section id="overview-view" class="app-view active" aria-labelledby="overview-tab">
-      <section class="status-band" aria-live="polite">
-        <div class="pulse-orbit" aria-hidden="true"><span></span><i></i></div>
-        <div><p id="status-title" class="status-title">系统处于待命状态</p><p id="status-detail" class="status-detail">启动后将连接本地模型，持续理解屏幕与系统声音。</p></div>
-      </section>
+      <div class="view-scroll">
+        <section class="status-band" aria-live="polite">
+          <div class="status-copy">
+            <p class="section-kicker">系统状态</p>
+            <p id="status-title" class="status-title">系统处于待命状态</p>
+            <p id="status-detail" class="status-detail">启动后将连接本地模型，持续理解屏幕与系统声音。</p>
+            <span class="privacy"><i data-lucide="shield-check"></i> 数据留在本机</span>
+          </div>
+          <div class="pulse-orbit" aria-hidden="true">
+            <span class="signal-line left"></span>
+            <span class="signal-core"><i></i></span>
+            <span class="signal-line right"></span>
+          </div>
+        </section>
 
-      <section class="system-list" aria-label="运行能力">
-        <div class="system-row">
-          <span class="row-icon"><i data-lucide="scan-line"></i></span>
-          <div><strong>持续感知</strong><small>屏幕与系统音频在本机处理</small></div>
-          <span id="monitor-value" class="row-value">未运行</span>
-        </div>
-        <div class="system-row">
-          <span class="row-icon amber"><i data-lucide="gamepad-2"></i></span>
-          <div><strong>当前场景</strong><small id="game-profile-summary">游戏方案：我的世界</small></div>
-          <span id="scene-value" class="row-value">其他</span>
-        </div>
-        <button id="game-profile-button" class="system-row profile-row" type="button">
-          <span class="row-icon green"><i data-lucide="library"></i></span>
-          <div><strong>游戏陪伴方案</strong><small>选择游戏与陪伴偏好</small></div>
-          <i class="row-chevron" data-lucide="chevron-right"></i>
-        </button>
-        <div class="system-row">
-          <span class="row-icon red"><i data-lucide="graduation-cap"></i></span>
-          <div><strong>课程记录</strong><small>转写、关键画面与课程总结</small></div>
-          <span class="row-value">自动</span>
-        </div>
-      </section>
+        <section class="capability-section" aria-labelledby="capability-title">
+          <div class="section-head">
+            <div><p class="section-kicker">工作台</p><h2 id="capability-title">当前能力</h2></div>
+            <span class="section-note">自动识别场景</span>
+          </div>
+          <div class="system-list" aria-label="运行能力">
+            <div class="system-row">
+              <span class="row-icon"><i data-lucide="scan-line"></i></span>
+              <div><strong>持续感知</strong><small>屏幕与系统音频在本机处理</small></div>
+              <span id="monitor-value" class="row-value">未运行</span>
+            </div>
+            <div class="system-row">
+              <span class="row-icon amber"><i data-lucide="gamepad-2"></i></span>
+              <div><strong>当前场景</strong><small id="game-profile-summary">游戏方案：我的世界</small></div>
+              <span id="scene-value" class="row-value">其他</span>
+            </div>
+            <button id="game-profile-button" class="system-row profile-row" type="button">
+              <span class="row-icon green"><i data-lucide="library"></i></span>
+              <div><strong>游戏陪伴方案</strong><small>选择游戏与陪伴偏好</small></div>
+              <span class="row-action">管理 <i data-lucide="chevron-right"></i></span>
+            </button>
+            <div class="system-row">
+              <span class="row-icon red"><i data-lucide="graduation-cap"></i></span>
+              <div><strong>课程记录</strong><small>转写、关键画面与课程总结</small></div>
+              <span class="row-value">自动</span>
+            </div>
+          </div>
+        </section>
 
-      <section class="activity-section">
-        <div class="section-head"><h2>运行日志</h2><span class="privacy"><i data-lucide="shield-check"></i> 本地优先</span></div>
-        <div id="activity-log" class="activity-log" role="log"><p><time>--:--</time><span>等待启动 AI 贾维斯</span></p></div>
-      </section>
+        <section class="activity-section">
+          <div class="section-head">
+            <div><p class="section-kicker">最近动态</p><h2>运行日志</h2></div>
+            <span class="live-label"><i></i> 实时</span>
+          </div>
+          <div id="activity-log" class="activity-log" role="log" aria-live="polite">
+            <p><time>--:--</time><span>等待启动 AI 贾维斯</span></p>
+          </div>
+        </section>
+      </div>
     </section>
 
-    <section id="memory-view" class="app-view memory-view" aria-label="每日记忆">
+    <section id="memory-view" class="app-view memory-view" aria-labelledby="memory-tab">
       <header class="memory-header">
-        <div>
-          <p class="eyebrow">DAILY MEMORY</p>
-          <h2>今日记忆</h2>
-          <p id="memory-today-label" class="memory-date">--</p>
+        <div class="memory-heading">
+          <p class="section-kicker">每日记忆</p>
+          <div><h2>今天</h2><span id="memory-today-label" class="memory-date">--</span></div>
         </div>
         <div class="memory-count"><strong id="memory-today-count">0</strong><span>条活动</span></div>
       </header>
+
       <div class="memory-actions">
         <button id="memory-generate" class="primary-command" type="button"><i data-lucide="sparkles"></i><span>生成今日记忆</span></button>
         <span id="memory-state" class="memory-state" aria-live="polite">等待连接</span>
       </div>
+
       <section class="memory-history">
-        <div class="section-head"><h2>每日记录</h2><button id="memory-refresh" class="icon-command compact" type="button" title="刷新" aria-label="刷新记忆"><i data-lucide="refresh-cw"></i></button></div>
+        <div class="section-head">
+          <div><p class="section-kicker">时间线</p><h2>每日记录</h2></div>
+          <button id="memory-refresh" class="icon-command compact" type="button" title="刷新记忆" aria-label="刷新记忆"><i data-lucide="refresh-cw"></i></button>
+        </div>
         <div id="memory-days" class="memory-days" role="list"></div>
       </section>
+
       <article id="memory-document" class="memory-document" aria-live="polite">
         <div class="empty-memory"><i data-lucide="notebook"></i><p>今天还没有可记录的活动</p></div>
       </article>
@@ -86,23 +121,38 @@
     </footer>
   </main>
 
-  <dialog id="game-profile-dialog" class="profile-dialog">
+  <dialog id="game-profile-dialog" class="profile-dialog" aria-labelledby="profile-dialog-title">
     <form id="game-profile-form" method="dialog">
       <header class="dialog-head">
-        <div><h2>游戏陪伴方案</h2><p>当前方案会在进入游戏场景时自动加载。</p></div>
+        <div>
+          <p class="section-kicker">游戏场景</p>
+          <h2 id="profile-dialog-title">陪伴方案</h2>
+          <p>进入对应游戏时，贾维斯会自动使用所选方案。</p>
+        </div>
         <button id="profile-close" class="icon-command compact" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
       </header>
-      <div class="profile-toolbar">
-        <label><span>当前游戏</span><select id="profile-select" aria-label="当前游戏"></select></label>
+
+      <section class="profile-picker" aria-label="方案选择">
+        <label><span>方案库</span><select id="profile-select" aria-label="当前游戏"></select></label>
         <button id="profile-add" class="icon-command compact" type="button" title="新建方案" aria-label="新建方案"><i data-lucide="plus"></i></button>
         <button id="profile-delete" class="icon-command compact danger" type="button" title="删除方案" aria-label="删除方案"><i data-lucide="trash-2"></i></button>
+      </section>
+
+      <div class="dialog-fields">
+        <label class="field-label"><span>游戏名称</span><input id="profile-name" maxlength="40" autocomplete="off" required></label>
+        <label class="field-label prompt-field">
+          <span class="field-meta"><span>专属提示词</span><output id="profile-prompt-count">0 / 8000</output></span>
+          <textarea id="profile-prompt" maxlength="8000" rows="9" required></textarea>
+        </label>
       </div>
-      <label class="field-label"><span>游戏名称</span><input id="profile-name" maxlength="40" required></label>
-      <label class="field-label"><span>专属提示词</span><textarea id="profile-prompt" maxlength="8000" rows="9" required></textarea></label>
-      <p id="profile-error" class="profile-error" aria-live="polite"></p>
-      <footer class="dialog-actions"><button class="primary-command" type="submit"><i data-lucide="save"></i><span>保存并选用</span></button></footer>
+
+      <footer class="dialog-actions">
+        <p id="profile-error" class="profile-error" aria-live="polite"></p>
+        <button class="primary-command" type="submit"><i data-lucide="save"></i><span>保存并选用</span></button>
+      </footer>
     </form>
   </dialog>
+
   <script src="../../node_modules/lucide/dist/umd/lucide.js"></script>
   <script src="launcher.js"></script>
 </body>

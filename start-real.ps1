@@ -866,11 +866,31 @@ function Build-NativeWorker {
     }
     $needsFreshConfigure = $Rebuild
     $cachePath = Join-Path $BuildRoot "CMakeCache.txt"
-    if ($generatorToolset -and (Test-Path -LiteralPath $cachePath -PathType Leaf)) {
+    if (Test-Path -LiteralPath $cachePath -PathType Leaf) {
         $existingCache = Get-Content -LiteralPath $cachePath -Raw
-        $expectedToolset = "CMAKE_GENERATOR_TOOLSET:INTERNAL=$generatorToolset"
-        if ($existingCache -notmatch "(?m)^$([regex]::Escape($expectedToolset))\r?$") {
-            Write-Warning "Refreshing the CMake cache to attach the installed CUDA Toolkit to Visual Studio."
+        $cachedHomeMatch = [regex]::Match(
+            $existingCache,
+            "(?m)^CMAKE_HOME_DIRECTORY:INTERNAL=(.+?)\r?$"
+        )
+        if ($cachedHomeMatch.Success) {
+            $cachedHome = [IO.Path]::GetFullPath($cachedHomeMatch.Groups[1].Value.Trim())
+            $expectedHome = [IO.Path]::GetFullPath($ProjectRoot)
+            if (-not [string]::Equals(
+                    $cachedHome.TrimEnd('\', '/'),
+                    $expectedHome.TrimEnd('\', '/'),
+                    [StringComparison]::OrdinalIgnoreCase)) {
+                Write-Warning "Refreshing a CMake cache created for another project workspace: $cachedHome"
+                $needsFreshConfigure = $true
+            }
+        }
+        if ($generatorToolset) {
+            $expectedToolset = "CMAKE_GENERATOR_TOOLSET:INTERNAL=$generatorToolset"
+            if ($existingCache -notmatch "(?m)^$([regex]::Escape($expectedToolset))\r?$") {
+                Write-Warning "Refreshing the CMake cache to attach the installed CUDA Toolkit to Visual Studio."
+                $needsFreshConfigure = $true
+            }
+        }
+        if ($existingCache -notmatch "JARVIS_ENABLE_STUB_RUNTIME:BOOL=OFF") {
             $needsFreshConfigure = $true
         }
     }

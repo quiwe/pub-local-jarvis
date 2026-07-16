@@ -25,6 +25,17 @@ class CommandResponse(BaseModel):
     result: dict[str, Any]
 
 
+class DuplexStartRequest(BaseModel):
+    instruction: str = Field(min_length=1, max_length=2000)
+    session_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+class DuplexStatusResponse(BaseModel):
+    active: bool
+    session_id: str | None
+    instruction: str
+
+
 class SceneObservation(BaseModel):
     score: float = Field(ge=0, le=1)
 

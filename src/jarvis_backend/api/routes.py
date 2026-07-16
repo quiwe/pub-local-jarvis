@@ -12,6 +12,8 @@ from .schemas import (
     CourseKeyframeRequest,
     CourseResponse,
     CourseStartRequest,
+    DuplexStartRequest,
+    DuplexStatusResponse,
     EventMessage,
     HealthResponse,
     MemoryClearRequest,
@@ -53,6 +55,25 @@ async def health(request: Request) -> HealthResponse:
 async def command(body: CommandRequest, request: Request) -> CommandResponse:
     result = await service(request).command(body.command, body.arguments)
     return CommandResponse(accepted=True, result=result)
+
+
+@router.get("/duplex", response_model=DuplexStatusResponse)
+async def duplex_status(request: Request) -> DuplexStatusResponse:
+    return DuplexStatusResponse(**service(request).duplex_status())
+
+
+@router.post("/duplex", response_model=DuplexStatusResponse)
+async def start_duplex(body: DuplexStartRequest, request: Request) -> DuplexStatusResponse:
+    try:
+        result = await service(request).start_duplex(body.instruction, body.session_id)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    return DuplexStatusResponse(**result)
+
+
+@router.delete("/duplex", response_model=DuplexStatusResponse)
+async def stop_duplex(request: Request) -> DuplexStatusResponse:
+    return DuplexStatusResponse(**(await service(request).stop_duplex()))
 
 
 @router.post("/scene/observations", response_model=SceneResponse)
