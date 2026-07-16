@@ -94,10 +94,16 @@
           <div><h2>今天</h2><span id="memory-today-label" class="memory-date">--</span></div>
         </div>
         <div class="memory-count"><strong id="memory-today-count">0</strong><span>条活动</span></div>
+        <div class="memory-mode" role="tablist" aria-label="记忆视图">
+          <button class="active" type="button" role="tab" aria-selected="true" data-memory-mode="text"><i data-lucide="notebook-text"></i><span>文字回顾</span></button>
+          <button type="button" role="tab" aria-selected="false" data-memory-mode="image"><i data-lucide="image"></i><span>日程图</span></button>
+        </div>
       </header>
 
       <div class="memory-actions">
         <button id="memory-generate" class="primary-command" type="button"><i data-lucide="sparkles"></i><span>生成今日记忆</span></button>
+        <button id="memory-image-generate" class="secondary-command" type="button"><i data-lucide="image-plus"></i><span>生成日程图</span></button>
+        <button id="memory-image-settings" class="icon-command compact" type="button" title="配置生图模型" aria-label="配置生图模型"><i data-lucide="settings-2"></i></button>
         <span id="memory-state" class="memory-state" aria-live="polite">等待连接</span>
       </div>
 
@@ -112,6 +118,15 @@
       <article id="memory-document" class="memory-document" aria-live="polite">
         <div class="empty-memory"><i data-lucide="notebook"></i><p>今天还没有可记录的活动</p></div>
       </article>
+
+      <section id="memory-image-view" class="memory-image-view" aria-live="polite" hidden>
+        <div class="memory-image-stage">
+          <img id="memory-image-preview" alt="所选日期的 AI 贾维斯日程图" hidden>
+          <div id="memory-image-empty" class="memory-image-empty"><i data-lucide="image"></i><p>这一天还没有日程图</p></div>
+          <span id="memory-image-stamp" class="memory-image-stamp"></span>
+        </div>
+        <div id="memory-image-history" class="memory-image-history" aria-label="该日期的历史日程图"></div>
+      </section>
     </section>
 
     <footer class="command-bar">
@@ -149,6 +164,28 @@
       <footer class="dialog-actions">
         <p id="profile-error" class="profile-error" aria-live="polite"></p>
         <button class="primary-command" type="submit"><i data-lucide="save"></i><span>保存并选用</span></button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="image-settings-dialog" class="profile-dialog image-settings-dialog" aria-labelledby="image-settings-title">
+    <form id="image-settings-form" method="dialog">
+      <header class="dialog-head">
+        <div>
+          <p class="section-kicker">图像生成</p>
+          <h2 id="image-settings-title">日程图模型</h2>
+          <p id="image-settings-state">本机安全配置</p>
+        </div>
+        <button id="image-settings-close" class="icon-command compact" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+      </header>
+      <div class="dialog-fields">
+        <label class="field-label"><span>Base URL</span><input id="image-base-url" type="url" maxlength="2048" placeholder="https://api.openai.com/v1" autocomplete="url" required></label>
+        <label class="field-label"><span>API Key</span><input id="image-api-key" type="password" maxlength="4096" autocomplete="new-password"></label>
+        <label class="field-label"><span>模型名称</span><input id="image-model-name" maxlength="256" placeholder="gpt-image-1.5" autocomplete="off" required></label>
+      </div>
+      <footer class="dialog-actions">
+        <p id="image-settings-error" class="profile-error" aria-live="polite"></p>
+        <button class="primary-command" type="submit"><i data-lucide="shield-check"></i><span>保存配置</span></button>
       </footer>
     </form>
   </dialog>

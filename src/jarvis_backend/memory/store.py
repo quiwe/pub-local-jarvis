@@ -64,6 +64,23 @@ def _atomic_text(path: Path, value: str) -> None:
         raise
 
 
+def _atomic_bytes(path: Path, value: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 def _tokens(text: str) -> list[str]:
     return [token.casefold() for token in _TOKEN_RE.findall(text)]
 
@@ -120,6 +137,7 @@ class MemoryStore:
         self.facts_path = self.root / "facts.json"
         self.index_path = self.root / "index.json"
         self.daily_root = self.root / "daily"
+        self.daily_images_root = self.root / "daily-images"
         self.root.mkdir(parents=True, exist_ok=True)
 
     def append(
@@ -175,6 +193,14 @@ class MemoryStore:
                     days.add(date.fromisoformat(path.stem))
                 except ValueError:
                     continue
+        if self.daily_images_root.exists():
+            for path in self.daily_images_root.iterdir():
+                if not path.is_dir():
+                    continue
+                try:
+                    days.add(date.fromisoformat(path.name))
+                except ValueError:
+                    continue
         return sorted(days, reverse=True)
 
     def daily_path(self, day: date) -> Path:
@@ -188,6 +214,47 @@ class MemoryStore:
     def read_daily_memory(self, day: date) -> str | None:
         path = self.daily_path(day)
         return path.read_text(encoding="utf-8") if path.exists() else None
+
+    def write_daily_image(
+        self, day: date, filename: str, content: bytes, metadata: Mapping[str, Any]
+    ) -> Path:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", filename):
+            raise ValueError("invalid daily image filename")
+        path = self.daily_images_root / day.isoformat() / filename
+        _atomic_bytes(path, content)
+        _atomic_json(path.with_suffix(path.suffix + ".json"), dict(metadata))
+        return path
+
+    def daily_images(self, day: date | None = None) -> list[dict[str, Any]]:
+        roots = [self.daily_images_root / day.isoformat()] if day else (
+            list(self.daily_images_root.iterdir()) if self.daily_images_root.exists() else []
+        )
+        result = []
+        for root in roots:
+            if not root.is_dir():
+                continue
+            for metadata_path in root.glob("*.json"):
+                try:
+                    value = json.loads(metadata_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if not isinstance(value, dict):
+                    continue
+                filename = str(value.get("filename", ""))
+                if not re.fullmatch(r"[A-Za-z0-9_.-]+", filename):
+                    continue
+                image_path = root / filename
+                if image_path.is_file():
+                    result.append(dict(value))
+        return sorted(result, key=lambda item: str(item.get("created_at", "")), reverse=True)
+
+    def daily_image_path(self, day: date, filename: str) -> Path:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", filename):
+            raise FileNotFoundError(filename)
+        path = self.daily_images_root / day.isoformat() / filename
+        if not path.is_file():
+            raise FileNotFoundError(filename)
+        return path
 
     def write_summary(self, text: str, *, through_event_id: str | None = None) -> None:
         _atomic_json(

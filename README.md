@@ -17,10 +17,10 @@ Windows 本地优先的 AI 贾维斯应用。核心能力由后端提供，Elect
 - Windows Named Pipe 客户端/服务端。
 - DXGI Desktop Duplication 与 WASAPI loopback 基础采集。
 - 16 kHz 单声道重采样、精确 2 秒音频窗口、画面指纹和 latest-only 调度。
-- 后台活动记忆、按日 Markdown、本地模型时间轴总结、历史浏览、BM25 风格检索和保留/清理。
+- 后台活动记忆、按日 Markdown、本地模型时间轴总结、历史浏览、可选日程图生成、BM25 风格检索和保留/清理。
 - 感知前置画面变化检测；静止、静音 10 分钟后提醒，提醒间隔不少于 15 分钟。
 - 课程会话、转写、关键帧、可恢复 Markdown 输出及 Windows Known Folder Desktop 定位。
-- 普通场景按需气泡提醒、网课场景低频陪伴气泡、游戏场景桌宠隐藏与点击穿透弹幕层。
+- 普通主动文本只接受 duplex 模型自主 `SPEAK`，网课场景使用低频专用气泡，游戏场景使用桌宠隐藏与点击穿透弹幕层。
 - 无 TTS 原生全双工感知：随持续感知自动运行，模型每秒自主选择 LISTEN/SPEAK，仅在有明确且有用的信息时显示文字气泡。
 - 网课自动开始/结束记录，并导出 `README.md` 和 `images/` 到桌面的独立课程文件夹。
 - 独立、固定提交且 SHA-256 验证的第三方运行时源码快照，以及 MiniCPM-o 模型布局校验。
@@ -72,7 +72,7 @@ npm start
 
 桌面端只消费 `/ws/events` 的后端事件：
 
-- `assistant.message` 仅在有可靠新进展时显示 8 至 30 字的趣味短句，并以“主人”称呼使用者，默认冷却 20 秒；
+- `assistant.message` 的普通文本只来自 `source: duplex`：必须有当前可靠证据并给出结果、错误、风险或立即有用的含义；日常画面复述、疑问句、能力越界提议和不确定猜测会被过滤；
 - `course.interaction` 显示网课陪伴气泡，默认冷却 30 秒；
 - `barrage.generated` 在游戏场景显示弹幕；
 - `course.keyframe.requested` 触发一次缩放后的屏幕截图并回传课程接口；
@@ -87,7 +87,11 @@ npm run build
 
 安装包不携带模型权重。首次真实启动仍由后端启动器按既有校验流程准备模型与原生运行时。
 
-主要 API 前缀为 `/api/v1`，包括健康、命令、场景、弹幕、记忆和课程接口。每日记忆通过 `/memory/days` 查询，并通过 `/memory/days/{date}/generate` 调用本地模型归并时间段、生成或刷新。事件 WebSocket 为 `/ws/events`。
+主要 API 前缀为 `/api/v1`，包括健康、命令、场景、弹幕、记忆和课程接口。每日记忆通过 `/memory/days` 查询，并通过 `/memory/days/{date}/generate` 调用本地模型归并时间段、生成或刷新。日程图通过 `/memory/days/{date}/images` 生成和查询，图片内容使用同级文件接口读取。事件 WebSocket 为 `/ws/events`。
+
+记忆页可配置 OpenAI Images 风格的编辑接口 `Base URL / API Key / model name`。生成时后端在缺少当日总结时先生成总结，再把当前日期、`## 今日回顾`、`src/jarvis_backend/assets/jarvis-character-reference.png` 和 `jarvis-style-reference.png` 以两个有序 `image[]` 部件提交到 `{baseUrl}/images/edits`。当前兼容返回 `b64_json`、`base64`、`result` 或 HTTP(S) 图片 URL 的服务商；具体参数兼容性仍取决于服务商是否支持多参考图、`1536x1024` 和 `quality=high`。
+
+桌面端使用 Electron `safeStorage` 加密 API Key，渲染进程只能看到 `hasApiKey`，明文不会写入记忆元数据。每次生成都会保留独立文件与 sidecar 元数据，默认位于 `memory/daily-images/YYYY-MM-DD/`，同一天可保存并浏览多张历史图片。
 
 原生全双工会话随持续感知自动启动、暂停和恢复，无需用户配置观察任务。底层 `GET/POST/DELETE /api/v1/duplex` 保留用于兼容和诊断。实现、资源边界和验收方法见 [原生全双工模式](FULL_DUPLEX_MODE.md)。
 
@@ -131,9 +135,9 @@ MVP 是文本输出，不需要 TTS、projector、Token2Wav 或参考音色文�
 ## 数据与隐私
 
 - 普通运行不应持久化原始屏幕和音频。
-- 记忆事件默认写到 `memory/events.jsonl`，每日文档写到 `memory/daily/YYYY-MM-DD.md`；课程工作文件写到 `courses/sessions/`，这些目录均被 `.gitignore` 排除。
+- 记忆事件默认写到 `memory/events.jsonl`，每日文档写到 `memory/daily/YYYY-MM-DD.md`，日程图写到 `memory/daily-images/YYYY-MM-DD/`；课程工作文件写到 `courses/sessions/`，这些目录均被 `.gitignore` 排除。
 - 课程关键帧只有被课程流程选中时才写盘。
-- 网课显示状态需连续 3 次判为非课程才会退出；课程记录会话需持续离课至少 90 秒且达到 4 次感知样本才会结束，APP 重启会继续未完成会话，因此短暂误判不会拆分课程。
+- `game/course` 显示切换默认要求两个连续一致样本；实时游戏与游戏视频/直播、持续授课与普通网页/代码/文档分别使用显式证据判定。课程记录会话仍需持续离课至少 90 秒且达到 4 次感知样本才会结束，APP 重启会继续未完成会话。
 - 实时阶段只记录授课语音转写和视觉模型选出的关键画面；课程结束后，后端基于整节课转写统一生成一次最终课程总结。内部转写及截图来源元数据不会写入成品 Markdown。
 - 未配置课程输出目录时，最终工件写到 Windows Known Folder Desktop 下的 `Jarvis-Courses/<session-id>/`，其中包含 `README.md` 和 `images/`。
 - 暂停监控会停止采集线程并清空 worker 持有的采集对象。

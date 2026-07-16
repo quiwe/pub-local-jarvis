@@ -40,9 +40,9 @@ class SceneHysteresis:
 
 
 class CourseSceneStabilizer:
-    """Keeps brief non-course classifications from interrupting an active course."""
+    """Requires consistent evidence before entering or switching special scenes."""
 
-    def __init__(self, enter_samples: int = 1, exit_samples: int = 3) -> None:
+    def __init__(self, enter_samples: int = 2, exit_samples: int = 2) -> None:
         if enter_samples < 1 or exit_samples < 1:
             raise ValueError("sample counts must be positive")
         self.enter_samples = enter_samples
@@ -57,19 +57,15 @@ class CourseSceneStabilizer:
         self._streak = 0
 
     def observe(self, scene: str) -> str:
-        if self.current == "course":
-            if scene == "course":
-                self.force(scene)
-            else:
-                self._streak += 1
-                self._candidate = scene
-                if self._streak >= self.exit_samples:
-                    self.force(scene)
-        elif scene == "course":
-            self._streak = self._streak + 1 if self._candidate == scene else 1
-            self._candidate = scene
-            if self._streak >= self.enter_samples:
-                self.force(scene)
-        else:
+        if scene not in {"game", "course", "other"}:
+            scene = "other"
+        if scene == self.current:
+            self.force(scene)
+            return self.current
+
+        self._streak = self._streak + 1 if self._candidate == scene else 1
+        self._candidate = scene
+        needed = self.enter_samples if self.current == "other" else self.exit_samples
+        if self._streak >= needed:
             self.force(scene)
         return self.current

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body {
+      display: grid;
+      place-items: center;
+      font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+      color: #172322;
+      background: #edf2ef;
+    }
+    .sheet {
+      width: 920px;
+      height: 920px;
+      display: grid;
+      grid-template-rows: 120px 1fr 92px;
+      border: 14px solid #172322;
+      background: #f8faf8;
+      box-shadow: 22px 24px 0 #d49a43;
+    }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 0 48px; border-bottom: 5px solid #172322; }
+    .date { font: 700 54px/1 "Cascadia Mono", Consolas, monospace; color: #2b7a70; }
+    .signal { width: 170px; height: 22px; border-top: 4px solid #172322; border-bottom: 4px solid #172322; }
+    main { position: relative; display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; padding: 36px 40px; }
+    .panel { position: relative; overflow: hidden; border: 5px solid #172322; background: #dce9e5; }
+    .panel:nth-child(2) { background: #f1dfbd; }
+    .panel:nth-child(3) { background: #dce4ef; }
+    .panel:nth-child(4) { background: #eedbd8; }
+    .window { position: absolute; inset: 34px 38px 86px; border: 5px solid #172322; background: #fff; }
+    .window::before { content: ""; display: block; height: 34px; border-bottom: 5px solid #172322; background: #2b7a70; }
+    .window::after { content: ""; position: absolute; left: 34px; right: 34px; top: 78px; height: 70px; border-top: 16px solid #d49a43; border-bottom: 16px solid #b8544d; }
+    .desk { position: absolute; left: 0; right: 0; bottom: 0; height: 76px; border-top: 5px solid #172322; background: #8eb1aa; }
+    .mark { position: absolute; right: 22px; bottom: 20px; width: 56px; height: 56px; display: grid; place-items: center; border: 5px solid #172322; border-radius: 50%; color: #f8faf8; background: #172322; font-size: 28px; font-weight: 800; }
+    footer { display: grid; grid-template-columns: repeat(4, 1fr); align-items: center; border-top: 5px solid #172322; }
+    footer span { height: 100%; display: grid; place-items: center; border-right: 4px solid #172322; font: 700 27px/1 "Cascadia Mono", Consolas, monospace; }
+    footer span:last-child { border-right: 0; }
+  </style>
+</head>
+<body>
+  <article class="sheet" aria-label="AI Jarvis cartoon daily record style reference">
+    <header><div class="date">DAY / 01</div><div class="signal"></div></header>
+    <main>
+      <section class="panel"><div class="window"></div><div class="desk"></div><div class="mark">J</div></section>
+      <section class="panel"><div class="window"></div><div class="desk"></div><div class="mark">J</div></section>
+      <section class="panel"><div class="window"></div><div class="desk"></div><div class="mark">J</div></section>
+      <section class="panel"><div class="window"></div><div class="desk"></div><div class="mark">J</div></section>
+    </main>
+    <footer><span>09:00</span><span>12:00</span><span>16:00</span><span>21:00</span></footer>
+  </article>
+</body>
+</html>

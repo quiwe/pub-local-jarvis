@@ -9,6 +9,7 @@ const {
   desktopCapturer,
   ipcMain,
   nativeImage,
+  safeStorage,
   screen,
   shell,
 } = require("electron");
@@ -19,6 +20,12 @@ const { isPetPointerInteractive } = require("./pet-hit-test");
 const { randomPrivacyDelay, randomPrivacyMessage } = require("./privacy-mode");
 const { resolveDisplayScene } = require("./scene-policy");
 const { defaultSettings, loadSettings, normalizeProfile, saveSettings } = require("./game-profiles");
+const {
+  loadSettings: loadImageSettings,
+  normalizeSettings: normalizeImageSettings,
+  publicSettings: publicImageSettings,
+  saveSettings: saveImageSettings,
+} = require("./image-generation-settings");
 
 app.setName("AI Jarvis");
 app.commandLine.appendSwitch("disable-background-timer-throttling");
@@ -39,6 +46,8 @@ let petMouseInteractive = false;
 let petBubbleVisible = false;
 let gameSettings = defaultSettings();
 let gameSettingsPath = "";
+let imageSettingsPath = "";
+let imageSettings = { baseUrl: "", modelName: "", apiKey: "" };
 let activeCourseSessionId = null;
 const pendingCaptures = new Set();
 const state = {
@@ -57,6 +66,18 @@ function selectedGameProfile() {
 function persistGameSettings() {
   saveSettings(gameSettingsPath, gameSettings);
   publishState({ gameProfile: selectedGameProfile().name });
+}
+
+function encryptApiKey(value) {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error("当前系统无法安全保存 API Key");
+  }
+  return safeStorage.encryptString(value).toString("base64");
+}
+
+function decryptApiKey(value) {
+  if (!safeStorage.isEncryptionAvailable()) return "";
+  return safeStorage.decryptString(Buffer.from(value, "base64"));
 }
 
 async function syncGameProfile() {
@@ -347,7 +368,11 @@ async function toggleScreenPrivacy() {
 
 function handleBackendEvent(event) {
   const payload = event && event.payload ? event.payload : {};
-  if (event && (event.topic === "memory.activity.recorded" || event.topic === "memory.day.generated")) {
+  if (event && (
+    event.topic === "memory.activity.recorded" ||
+    event.topic === "memory.day.generated" ||
+    event.topic === "memory.image.generated"
+  )) {
     send(launcherWindow, "jarvis:memory-updated", payload);
   }
   if (event && event.topic === "course.started") {
@@ -463,6 +488,22 @@ function registerIpc() {
   ipcMain.handle("jarvis:memory-days", () => manager.memoryDays());
   ipcMain.handle("jarvis:memory-day", (_event, day) => manager.memoryDay(day));
   ipcMain.handle("jarvis:memory-generate", (_event, day) => manager.generateMemoryDay(day));
+  ipcMain.handle("jarvis:memory-images", (_event, day) => manager.memoryImages(day));
+  ipcMain.handle("jarvis:memory-image-generate", (_event, day) => {
+    if (!imageSettings.baseUrl || !imageSettings.modelName || !imageSettings.apiKey) {
+      throw new Error("请先配置生图 API");
+    }
+    return manager.generateMemoryImage(day, imageSettings);
+  });
+  ipcMain.handle("jarvis:image-settings-get", () => publicImageSettings(imageSettings));
+  ipcMain.handle("jarvis:image-settings-save", (_event, value) => {
+    imageSettings = saveImageSettings(
+      imageSettingsPath,
+      normalizeImageSettings(value, imageSettings),
+      encryptApiKey,
+    );
+    return publicImageSettings(imageSettings);
+  });
   ipcMain.handle("jarvis:get-game-profiles", () => ({
     selectedId: gameSettings.selectedId,
     profiles: gameSettings.profiles.map(item => ({ ...item })),
@@ -508,6 +549,8 @@ function registerIpc() {
 app.whenReady().then(() => {
   gameSettingsPath = path.join(app.getPath("userData"), "game-profiles.json");
   gameSettings = loadSettings(gameSettingsPath);
+  imageSettingsPath = path.join(app.getPath("userData"), "image-generation.json");
+  imageSettings = loadImageSettings(imageSettingsPath, decryptApiKey);
   state.gameProfile = selectedGameProfile().name;
   const useFake = process.env.JARVIS_DESKTOP_USE_FAKE === "1";
   manager = new BackendManager({ backendRoot: backendRoot(), useFake });

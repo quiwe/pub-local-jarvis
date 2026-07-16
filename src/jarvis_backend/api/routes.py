@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi.responses import FileResponse
 
+from jarvis_backend.memory import ImageProvider
 from jarvis_backend.orchestrator import OrchestrationService
 
 from .schemas import (
@@ -20,6 +22,8 @@ from .schemas import (
     MemoryClearResponse,
     MemoryDayResponse,
     MemoryDaySummary,
+    MemoryImageGenerateRequest,
+    MemoryImageResponse,
     MemoryStatusResponse,
     MemorySummaryResponse,
     SceneObservation,
@@ -140,6 +144,52 @@ async def memory_day_generate(day: str, request: Request) -> MemoryDayResponse:
             "本地模型暂时无法生成记忆总结，请稍后重试",
         ) from exc
     return MemoryDayResponse.model_validate(result)
+
+
+@router.get("/memory/images", response_model=list[MemoryImageResponse])
+async def memory_images(request: Request) -> list[MemoryImageResponse]:
+    return [
+        MemoryImageResponse.model_validate(item)
+        for item in service(request).daily_images()
+    ]
+
+
+@router.get("/memory/days/{day}/images", response_model=list[MemoryImageResponse])
+async def memory_day_images(day: str, request: Request) -> list[MemoryImageResponse]:
+    try:
+        items = service(request).daily_images(day)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    return [MemoryImageResponse.model_validate(item) for item in items]
+
+
+@router.post("/memory/days/{day}/images", response_model=MemoryImageResponse)
+async def memory_day_image_generate(
+    day: str, body: MemoryImageGenerateRequest, request: Request
+) -> MemoryImageResponse:
+    try:
+        result = await service(request).generate_daily_image(
+            day,
+            ImageProvider(
+                base_url=body.base_url,
+                api_key=body.api_key.get_secret_value(),
+                model_name=body.model_name,
+            ),
+        )
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    return MemoryImageResponse.model_validate(result)
+
+
+@router.get("/memory/days/{day}/images/{filename}", response_class=FileResponse)
+async def memory_day_image_content(
+    day: str, filename: str, request: Request
+) -> FileResponse:
+    try:
+        path = service(request).daily_image_path(day, filename)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "memory image not found") from exc
+    return FileResponse(path)
 
 
 def course_response(state: object) -> CourseResponse:

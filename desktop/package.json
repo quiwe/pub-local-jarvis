@@ -10,6 +10,7 @@
     "test": "node --test test/*.test.js",
     "test:visual": "electron test/visual-smoke.js",
     "assets:generate": "electron test/generate-assets.js",
+    "assets:memory-references": "electron test/generate-memory-reference-assets.js",
     "build": "electron-builder --win nsis:x64"
   },
   "dependencies": {

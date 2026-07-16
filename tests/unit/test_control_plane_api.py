@@ -287,15 +287,14 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
     with make_client(tmp_path) as client:
         native = client.app.state.orchestrator.native_client
 
-        client.portal.call(
-            native.emit,
-            {
-                "type": "perception.completed",
-                "request_id": 1 << 63,
-                "text": '{"scene":"game","confidence":0.94,"barrage":"漂亮的反杀！",'
-                '"course_note":"","course_title":""}',
-            },
-        )
+        game_payload = {
+            "type": "perception.completed",
+            "request_id": 1 << 63,
+            "text": '{"scene":"game","confidence":0.94,"barrage":"漂亮的反杀！",'
+            '"course_note":"","course_title":""}',
+        }
+        client.portal.call(native.emit, game_payload)
+        client.portal.call(native.emit, {**game_payload, "request_id": (1 << 63) + 1})
         time.sleep(0.02)
         events = client.get("/api/v1/events").json()
         assert any(
@@ -303,18 +302,17 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
             for event in events
         )
 
-        client.portal.call(
-            native.emit,
-            {
-                "type": "perception.completed",
-                "request_id": (1 << 63) + 1,
-                "text": '{"scene":"course","confidence":0.91,"barrage":"",'
-                '"course_transcript":"牛顿第二定律是 F=ma。",'
-                '"course_note":"牛顿第二定律是 F=ma。","course_title":"高中物理",'
-                '"capture_keyframe":true,"keyframe_note":"牛顿第二定律公式。",'
-                '"assistant_message":""}',
-            },
-        )
+        course_payload = {
+            "type": "perception.completed",
+            "request_id": (1 << 63) + 2,
+            "text": '{"scene":"course","confidence":0.91,"barrage":"",'
+            '"course_transcript":"牛顿第二定律是 F=ma。",'
+            '"course_note":"牛顿第二定律是 F=ma。","course_title":"高中物理",'
+            '"capture_keyframe":true,"keyframe_note":"牛顿第二定律公式。",'
+            '"assistant_message":""}',
+        }
+        client.portal.call(native.emit, course_payload)
+        client.portal.call(native.emit, {**course_payload, "request_id": (1 << 63) + 3})
         time.sleep(0.02)
         courses = client.get("/api/v1/courses").json()
         assert len(courses) == 1
@@ -341,7 +339,7 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
 
         client.app.state.orchestrator.settings.courses.exit_grace_seconds = 0
         client.app.state.orchestrator.settings.courses.exit_samples = 3
-        for offset in range(2, 5):
+        for offset in range(4, 7):
             client.portal.call(
                 native.emit,
                 {
@@ -349,7 +347,7 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
                     "request_id": (1 << 63) + offset,
                     "text": '{"scene":"other","confidence":0.8,"barrage":"",'
                     '"course_note":"","course_title":"",'
-                    f'"assistant_message":"{"下载已经完成。" if offset == 2 else ""}"}}',
+                    f'"assistant_message":"{"下载已经完成。" if offset == 4 else ""}"}}',
                 },
             )
         time.sleep(0.03)
@@ -364,12 +362,11 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
             event["topic"] == "assistant.message" for event in events
         )
 
-        client.app.state.orchestrator.display_scene.force("other")
         client.portal.call(
             native.emit,
             {
                 "type": "perception.completed",
-                "request_id": (1 << 63) + 5,
+                "request_id": (1 << 63) + 7,
                 "text": (
                     '{"scene":"other","confidence":0.9,'
                     '"assistant_message":"新场景已经稳定，可以按刚才的目标继续推进。"}'
@@ -378,11 +375,7 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
         )
         time.sleep(0.02)
         events = client.get("/api/v1/events").json()
-        assert any(
-            event["topic"] == "assistant.message"
-            and event["payload"]["text"] == "新场景已经稳定，可以按刚才的目标继续推进。"
-            for event in events
-        )
+        assert not any(event["topic"] == "assistant.message" for event in events)
 
 
 async def test_auto_course_survives_transient_scene_misclassification(
@@ -418,16 +411,17 @@ async def test_auto_course_survives_transient_scene_misclassification(
         )
 
     await perceive("course", note="牛顿第二定律说明合外力等于质量与加速度的乘积。")
-    session_id = orchestrator._auto_course_id
-    assert session_id is not None
+    assert orchestrator._auto_course_id is None
     clock[0] = 1.0
     await perceive("course", note="牛顿第二定律说明合外力等于质量与加速度的乘积。")
+    session_id = orchestrator._auto_course_id
+    assert session_id is not None
 
     for now in (3.0, 6.0):
         clock[0] = now
         await perceive("other")
     assert orchestrator.courses.open(session_id).state.status == CourseStatus.RECORDING
-    assert orchestrator.events.history("perception.completed")[-1].payload["scene"] == "course"
+    assert orchestrator.events.history("perception.completed")[-1].payload["scene"] == "other"
 
     clock[0] = 7.0
     await perceive(
@@ -546,34 +540,36 @@ async def test_recording_course_resumes_after_backend_restart(tmp_path):
         ),
     )
     first = create_app(settings=settings).state.orchestrator
-    await first._handle_perception(
-        {
-            "text": json.dumps(
-                {
-                    "scene": "course",
-                    "course_title": "高等数学：映射",
-                    "course_transcript": "映射要求定义域中的每个元素有唯一对应。",
-                },
-                ensure_ascii=False,
-            )
-        }
-    )
+    initial = {
+        "text": json.dumps(
+            {
+                "scene": "course",
+                "confidence": 0.95,
+                "course_title": "高等数学：映射",
+                "course_transcript": "映射要求定义域中的每个元素有唯一对应。",
+            },
+            ensure_ascii=False,
+        )
+    }
+    await first._handle_perception(initial)
+    await first._handle_perception(initial)
     session_id = first._auto_course_id
     assert session_id is not None
 
     restarted = create_app(settings=settings).state.orchestrator
     assert restarted._auto_course_id == session_id
-    await restarted._handle_perception(
-        {
-            "text": json.dumps(
-                {
-                    "scene": "course",
-                    "course_transcript": "陪域中的元素可以没有原像。",
-                },
-                ensure_ascii=False,
-            )
-        }
-    )
+    resumed = {
+        "text": json.dumps(
+            {
+                "scene": "course",
+                "confidence": 0.95,
+                "course_transcript": "陪域中的元素可以没有原像。",
+            },
+            ensure_ascii=False,
+        )
+    }
+    await restarted._handle_perception(resumed)
+    await restarted._handle_perception(resumed)
 
     sessions = restarted.courses.sessions()
     assert len(sessions) == 1
@@ -585,6 +581,7 @@ async def test_recording_course_resumes_after_backend_restart(tmp_path):
 def test_interaction_frequency_blocks_repeated_barrage_during_dedup_window(tmp_path):
     with make_client(tmp_path) as client:
         native = client.app.state.orchestrator.native_client
+        client.app.state.orchestrator.display_scene.force("game")
 
         def emit(request_id, scene, barrage="", message=""):
             client.portal.call(
@@ -615,9 +612,7 @@ def test_interaction_frequency_blocks_repeated_barrage_during_dedup_window(tmp_p
         events = client.get("/api/v1/events").json()
         bubbles = [event for event in events if event["topic"] == "assistant.message"]
         barrages = [event for event in events if event["topic"] == "barrage.generated"]
-        assert [event["payload"]["text"] for event in bubbles] == [
-            "这一步已经理顺，接下来可以直接验证核心结果。"
-        ]
+        assert bubbles == []
         assert [event["payload"]["text"] for event in barrages] == [
             "漂亮操作！",
             "漂亮操作！",
@@ -627,6 +622,7 @@ def test_interaction_frequency_blocks_repeated_barrage_during_dedup_window(tmp_p
 def test_game_barrage_semantic_near_duplicates_are_suppressed(tmp_path):
     with make_client(tmp_path) as client:
         native = client.app.state.orchestrator.native_client
+        client.app.state.orchestrator.display_scene.force("game")
 
         for request_id, barrage in enumerate(
             ["漂亮操作，完成反杀！", "反杀完成，这操作漂亮！", "资源够了，可以推进"],
@@ -656,6 +652,7 @@ def test_game_barrage_semantic_near_duplicates_are_suppressed(tmp_path):
 def test_game_barrage_prefers_declarative_candidate_over_speculative_question(tmp_path):
     with make_client(tmp_path) as client:
         native = client.app.state.orchestrator.native_client
+        client.app.state.orchestrator.display_scene.force("game")
         payload = {
             "scene": "game",
             "confidence": 1.0,
@@ -689,6 +686,7 @@ def test_game_barrage_prefers_declarative_candidate_over_speculative_question(tm
 def test_game_barrage_uses_fresh_alternative_when_primary_is_repeated(tmp_path):
     with make_client(tmp_path) as client:
         native = client.app.state.orchestrator.native_client
+        client.app.state.orchestrator.display_scene.force("game")
 
         def emit(request_id, primary, candidates):
             client.portal.call(
@@ -729,6 +727,7 @@ def test_game_barrage_near_duplicate_recovers_before_exact_repeat(tmp_path):
     with make_client(tmp_path) as client:
         native = client.app.state.orchestrator.native_client
         orchestrator = client.app.state.orchestrator
+        orchestrator.display_scene.force("game")
 
         def emit(request_id, barrage):
             client.portal.call(
@@ -759,31 +758,25 @@ def test_game_barrage_near_duplicate_recovers_before_exact_repeat(tmp_path):
         assert generated == ["漂亮操作，完成反杀！", "反杀完成，这操作漂亮！"]
 
 
-def test_ordinary_bubble_default_cooldown_is_twenty_seconds(tmp_path):
+def test_structured_perception_never_emits_ordinary_assistant_message(tmp_path):
     with make_client(tmp_path) as client:
         native = client.app.state.orchestrator.native_client
-        orchestrator = client.app.state.orchestrator
-
-        def emit(request_id, message):
-            client.portal.call(
-                native.emit,
-                {
-                    "type": "perception.completed",
-                    "request_id": request_id,
-                    "text": (
-                        '{"scene":"other","confidence":0.9,"barrage":"",'
-                        f'"assistant_message":"{message}"}}'
-                    ),
-                },
-            )
-
-        assert orchestrator.settings.interaction.ordinary_bubble_cooldown_seconds == 20.0
-        emit(10, "切到文档了，思路开始落地。")
-        emit(11, "搜索结束，准备认真读了。")
-        time.sleep(0.03)
-        previous, emitted_at = orchestrator._recent_assistant_messages[-1]
-        orchestrator._recent_assistant_messages[-1] = (previous, emitted_at - 20.0)
-        emit(12, "资料已经看够了，现在可以把关键结论落到文档里。")
+        client.portal.call(
+            native.emit,
+            {
+                "type": "perception.completed",
+                "request_id": 10,
+                "text": json.dumps(
+                    {
+                        "scene": "other",
+                        "confidence": 0.9,
+                        "assistant_message": "切到文档了，思路开始落地。",
+                        "assistant_candidates": ["搜索结束，准备认真读了。"],
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        )
         time.sleep(0.03)
 
         messages = [
@@ -791,10 +784,7 @@ def test_ordinary_bubble_default_cooldown_is_twenty_seconds(tmp_path):
             for event in client.get("/api/v1/events").json()
             if event["topic"] == "assistant.message"
         ]
-        assert messages == [
-            "切到文档了，思路开始落地。",
-            "资料已经看够了，现在可以把关键结论落到文档里。",
-        ]
+        assert messages == []
 
 
 def test_monitoring_automatically_manages_ambient_duplex(tmp_path):
@@ -950,7 +940,71 @@ def test_perception_keeps_internal_observation_separate_from_bubble_text():
     assert result["assistant_message"] == "又和代码较上劲了？"
 
 
-def test_ordinary_bubble_uses_first_valid_model_candidate(tmp_path):
+@pytest.mark.parametrize(
+    ("payload", "expected_scene"),
+    [
+        (
+            {
+                "scene": "game",
+                "confidence": 0.99,
+                "scene_evidence": {
+                    "interactive_gameplay": False,
+                    "game_video_or_stream": True,
+                },
+            },
+            "other",
+        ),
+        (
+            {
+                "scene": "game",
+                "confidence": 0.99,
+                "scene_evidence": {
+                    "interactive_gameplay": True,
+                    "game_video_or_stream": False,
+                },
+                "barrage_candidates": ["资源充足，可以推进"],
+            },
+            "game",
+        ),
+        (
+            {
+                "scene": "course",
+                "confidence": 0.95,
+                "scene_evidence": {
+                    "active_instruction": True,
+                    "course_surface": True,
+                    "ordinary_browsing": True,
+                },
+                "course_note": "网页中出现课程二字，但主体仍是普通浏览。",
+            },
+            "other",
+        ),
+        (
+            {
+                "scene": "course",
+                "confidence": 0.95,
+                "scene_evidence": {
+                    "active_instruction": True,
+                    "course_surface": True,
+                    "ordinary_browsing": False,
+                },
+                "course_note": "讲师正在推导牛顿第二定律。",
+            },
+            "course",
+        ),
+    ],
+)
+def test_scene_evidence_rejects_passive_game_media_and_ordinary_browsing(
+    payload, expected_scene
+):
+    result = create_app().state.orchestrator._parse_perception(
+        json.dumps(payload, ensure_ascii=False)
+    )
+
+    assert result["scene"] == expected_scene
+
+
+def test_legacy_ordinary_candidates_are_discarded(tmp_path):
     with make_client(tmp_path) as client:
         native = client.app.state.orchestrator.native_client
         client.portal.call(
@@ -978,55 +1032,61 @@ def test_ordinary_bubble_uses_first_valid_model_candidate(tmp_path):
             for event in client.get("/api/v1/events").json()
             if event["topic"] == "assistant.message"
         ]
-        assert messages == ["表演开场，主人请就位！"]
+        assert messages == []
 
 
-def test_ordinary_bubbles_reject_narration_templates_and_near_duplicates(tmp_path):
+def test_duplex_messages_reject_narration_offers_and_uncertainty(tmp_path):
     with make_client(tmp_path) as client:
         orchestrator = client.app.state.orchestrator
-        assert orchestrator._clean_assistant_message(
-            "检测到图像文件夹，可能涉及照片查看或素材整理任务。"
-        ) == ""
-        assert orchestrator._clean_assistant_message(
-            "教师通过屏幕文字辅助讲解导数概念，学生可能在同步笔记。"
-        ) == ""
-        assert orchestrator._clean_assistant_message(
-            "你在处理代码文件，需要我帮忙查看错误信息吗？"
-        ) == ""
-        assert orchestrator._clean_assistant_message(
-            "桌面上的截图和文档看起来挺多的，要不要现在整理一下呢？"
-        ) == ""
-        assert orchestrator._clean_assistant_message(
-            "桌面图标较多，主要为文件夹和快捷方式，文件夹名称多与图像或项目相关，"
-            "桌面背景为地球星空主题，整体环境安静，无明显游戏或课程界面，"
-            "推测用户可能在整理文件或准备相关素材工作。"
-        ) == ""
-        assert orchestrator._clean_assistant_message(
-            "您正在观看一个名为‘对对子战神4’的视频，弹幕中有许多互动和调侃。"
-        ) == ""
-        assert orchestrator._clean_assistant_message(
-            "您正在查看网易邮箱的私人消息页面，可选择回复或查看其他联系人信息。"
-        ) == ""
-        assert orchestrator._clean_assistant_message("思路卡住了？换个对象呗？") == ""
-        assert orchestrator._clean_assistant_message(
-            "这个报错已经把范围缩小了，先核对调用参数，再决定要不要改实现。"
-        ) == ""
-        assert orchestrator._clean_assistant_message(
-            "AI合租话题挺有意思，需要帮你找类似视频吗？"
-        ) == ""
-        assert orchestrator._clean_assistant_message(
-            "代码窗口有点挡视线，需要整理吗？"
-        ) == ""
-        assert orchestrator._clean_assistant_message(
-            "这部分交给我，随时叫我帮忙。"
-        ) == ""
-        assert orchestrator._clean_assistant_message(
-            "这个报错已经把范围缩小了，先核对调用参数。"
-            "后续所有相关改动都等完整验证结果出来以后再统一决定。"
-        ) == "这个报错已经把范围缩小了，先核对调用参数。"
-        assert orchestrator._clean_assistant_message("又看这种低俗视频？")
-        assert orchestrator._clean_assistant_message("别急，喝口咖啡继续 coding！")
-        assert orchestrator._clean_assistant_message("主人这代码写得也太漂亮了！")
+        assert orchestrator._clean_duplex_message("你正在浏览项目文件。") == ""
+        assert orchestrator._clean_duplex_message("需要我帮你整理文件吗？") == ""
+        assert orchestrator._clean_duplex_message("看起来构建可能失败了。") == ""
+        assert orchestrator._clean_duplex_message("已经进入“概览”页，开始查看") == ""
+        assert orchestrator._clean_duplex_message("应用信息了。") == ""
+        assert orchestrator._clean_duplex_message("下载完成了，文件可以直接用了。") == (
+            "下载完成了，文件可以直接用了。"
+        )
+        assert orchestrator._clean_duplex_message(
+            "构建失败：链接器找不到入口符号。后续所有改动等完整验证后再决定。"
+        ) == "构建失败：链接器找不到入口符号。"
+
+
+def test_ambient_duplex_requires_concrete_proactive_value(tmp_path):
+    with make_client(tmp_path) as client:
+        native = client.app.state.orchestrator.native_client
+
+        for sequence, text in enumerate(
+            [
+                "已经进入“概览”页，开始查看",
+                "应用信息了。",
+                "构建失败：链接器找不到入口符号。",
+            ],
+            start=1,
+        ):
+            client.portal.call(
+                native.emit,
+                {
+                    "type": "duplex.decision",
+                    "session_id": "jarvis-ambient",
+                    "sequence": sequence,
+                    "ok": True,
+                    "decision": "speak",
+                    "text": text,
+                },
+            )
+
+        messages = [
+            event["payload"]
+            for event in client.get("/api/v1/events").json()
+            if event["topic"] == "assistant.message"
+        ]
+        assert messages == [
+            {
+                "text": "构建失败：链接器找不到入口符号。",
+                "source": "duplex",
+                "session_id": "jarvis-ambient",
+            }
+        ]
 
 
 def test_course_interactions_are_low_frequency_and_process_notes_are_discarded(tmp_path):
@@ -1087,6 +1147,7 @@ def test_course_interactions_are_low_frequency_and_process_notes_are_discarded(t
 def test_game_advice_falls_back_to_barrage_when_model_uses_wrong_field(tmp_path):
     with make_client(tmp_path) as client:
         native = client.app.state.orchestrator.native_client
+        client.app.state.orchestrator.display_scene.force("game")
         client.portal.call(
             native.emit,
             {

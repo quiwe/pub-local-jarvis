@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="../src/ui/pet.css">
+  <style>
+    html, body { background: transparent; }
+    body { display: grid; place-items: center; }
+    .pet { position: relative; inset: auto; transform: scale(4); transform-origin: center; filter: none; }
+    .pet .body-core { animation: none !important; }
+  </style>
+</head>
+<body>
+  <div class="pet" data-scene="other" aria-label="AI 贾维斯角色参考">
+    <div class="antenna"><i></i></div>
+    <div class="ear left"></div><div class="ear right"></div>
+    <div class="head">
+      <div class="brow left"></div><div class="brow right"></div>
+      <div class="eye left"><i></i></div><div class="eye right"><i></i></div>
+      <div class="mouth"><span></span><span></span><span></span></div>
+    </div>
+    <div class="neck"></div>
+    <div class="body-core">
+      <div class="core-ring"><span>J</span></div>
+      <i class="status-light one"></i><i class="status-light two"></i>
+    </div>
+    <div class="shadow"></div>
+  </div>
+</body>
+</html>

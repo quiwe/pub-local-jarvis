@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <deque>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -58,14 +59,14 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
       prompts_[request.id] = request.prompt;
     }
     changed_.notify_all();
-    if (request.prompt.find("场景分类与非游戏内容生成器") != std::string::npos &&
+    if (request.prompt.find("场景分类与客观信息提取器") != std::string::npos &&
         request.prompt.find("不得生成游戏弹幕") != std::string::npos) {
       return {request.id,
-              R"({"scene":"game","confidence":0.9,"observation":"玩家正在进行测试游戏"})",
+              R"({"scene":"game","confidence":0.9,"scene_evidence":{"interactive_gameplay":true,"game_video_or_stream":false},"observation":"玩家正在进行测试游戏"})",
               false};
     }
     return {request.id,
-            R"({"scene":"game","confidence":0.9,"observation":"玩家正在进行测试游戏","barrage_candidates":["测试弹幕"],"course_transcript":"","course_note":"","course_title":"","course_interaction":"","capture_keyframe":false,"keyframe_note":"","assistant_candidates":[],"assistant_message":""})",
+            R"({"scene":"game","confidence":0.9,"scene_evidence":{"interactive_gameplay":true,"game_video_or_stream":false},"observation":"玩家正在进行测试游戏","barrage_candidates":["测试弹幕"]})",
             false};
   }
   bool start_duplex(std::string instruction) override {
@@ -118,16 +119,20 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
       if (id < (std::uint64_t{1} << 63U)) continue;
       if (prompt.find("不得生成游戏弹幕") != std::string::npos &&
           prompt.find("场景判定") != std::string::npos &&
-          prompt.find("assistant_candidates") != std::string::npos &&
+          prompt.find("scene_evidence") != std::string::npos &&
           prompt.find("course_interaction") != std::string::npos &&
-          prompt.find("短暂静音") != std::string::npos &&
-          prompt.find("明确出现新的非课程主任务") != std::string::npos &&
+          prompt.find("游戏视频、直播、回放") != std::string::npos &&
+          prompt.find("搜索结果、普通网页") != std::string::npos &&
+          prompt.find("普通主动文本完全由独立的原生全双工会话决定") !=
+              std::string::npos &&
+          prompt.find("assistant_candidates") == std::string::npos &&
           prompt.find("<game_profile>") == std::string::npos &&
           prompt.find("关注生存资源") == std::string::npos) {
         clean_classification = true;
       }
       if (prompt.find("已经确认当前是 game") != std::string::npos &&
           prompt.find("你不会再次收到截图或音频") != std::string::npos &&
+          prompt.find("scene_evidence") != std::string::npos &&
           prompt.find("必须生成恰好 3 条") != std::string::npos &&
           prompt.find("冷却、去重和是否展示由后端负责") != std::string::npos &&
           prompt.find("本轮游戏弹幕主角度") != std::string::npos &&
@@ -265,6 +270,13 @@ int main() {
   auto recording = std::make_unique<RecordingRuntime>();
   auto* recording_ptr = recording.get();
   Worker worker(std::move(recording));
+  std::mutex native_event_mutex;
+  std::vector<std::string> native_events;
+  worker.set_completion([&](InferenceResult result) {
+    if (result.id != std::numeric_limits<std::uint64_t>::max()) return;
+    std::lock_guard lock(native_event_mutex);
+    native_events.push_back(std::move(result.text));
+  });
   require(worker.start("test"), "worker starts with recording runtime");
   worker.set_game_profile("测试游戏", "关注生存资源");
   require(worker.start_monitoring(std::make_unique<TestDesktopCapture>(),
@@ -282,6 +294,18 @@ int main() {
   std::this_thread::sleep_for(std::chrono::milliseconds(40));
   require(recording_ptr->received_duplex_context(),
           "duplex task receives one-second audio and current frame");
+  {
+    std::lock_guard lock(native_event_mutex);
+    require(std::ranges::any_of(native_events, [](const auto& event) {
+              return event.find("\"decision\":\"listen\"") != std::string::npos;
+            }),
+            "duplex task emits model listen decisions");
+    require(std::ranges::any_of(native_events, [](const auto& event) {
+              return event.find("\"decision\":\"speak\"") != std::string::npos &&
+                     event.find("测试条件已满足") != std::string::npos;
+            }),
+            "duplex task emits model speak decisions with text");
+  }
   require(recording_ptr->perception_request_count() == 2,
           "duplex task does not replace structured perception");
   worker.stop_duplex();

@@ -22,12 +22,15 @@ def test_course_scene_stabilizer_ignores_brief_misclassification() -> None:
     assert scene.observe("course") == "course"
     assert scene.observe("game") == "course"
     assert scene.observe("other") == "course"
+    assert scene.observe("game") == "course"
+    assert scene.observe("game") == "course"
     assert scene.observe("game") == "game"
 
 
-def test_default_course_scene_stabilizer_enters_immediately() -> None:
+def test_default_course_scene_stabilizer_requires_two_consistent_samples() -> None:
     scene = CourseSceneStabilizer()
 
+    assert scene.observe("course") == "other"
     assert scene.observe("course") == "course"
 
 

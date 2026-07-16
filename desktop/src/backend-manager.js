@@ -204,6 +204,23 @@ class BackendManager extends EventEmitter {
     });
   }
 
+  memoryImages(day) {
+    const suffix = day ? `/days/${encodeURIComponent(day)}` : "";
+    return this.request(`/api/v1/memory${suffix}/images`);
+  }
+
+  generateMemoryImage(day, settings) {
+    return this.request(`/api/v1/memory/days/${encodeURIComponent(day)}/images`, {
+      method: "POST",
+      body: JSON.stringify({
+        base_url: settings.baseUrl,
+        api_key: settings.apiKey,
+        model_name: settings.modelName,
+      }),
+      timeout: 10 * 60 * 1000,
+    });
+  }
+
   async stop() {
     this.stopping = true;
     clearTimeout(this.reconnectTimer);

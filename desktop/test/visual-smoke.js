@@ -28,6 +28,16 @@ async function capture(name, options, file, prepare) {
 
 app.whenReady().then(async () => {
   await fs.mkdir(output, { recursive: true });
+  const memoryImage = await fs.readFile(path.resolve(
+    __dirname,
+    "..",
+    "..",
+    "src",
+    "jarvis_backend",
+    "assets",
+    "jarvis-style-reference.png",
+  ));
+  const memoryImageUrl = `data:image/png;base64,${memoryImage.toString("base64")}`;
   ipcMain.handle("jarvis:get-state", () => ({
     phase: "idle",
     monitoring: false,
@@ -64,6 +74,37 @@ app.whenReady().then(async () => {
   ipcMain.handle("jarvis:memory-generate", (_event, day) => ({
     date: day, event_count: 3, generated: true, content: `# ${day} 的记忆`,
   }));
+  ipcMain.handle("jarvis:memory-images", (_event, day) => ([
+    {
+      id: `${day}-latest`,
+      date: day,
+      filename: "latest.png",
+      created_at: `${day}T17:25:00Z`,
+      model_name: "gpt-image-1.5",
+      content_url: memoryImageUrl,
+    },
+    {
+      id: `${day}-earlier`,
+      date: day,
+      filename: "earlier.png",
+      created_at: `${day}T16:10:00Z`,
+      model_name: "gpt-image-1.5",
+      content_url: memoryImageUrl,
+    },
+  ]));
+  ipcMain.handle("jarvis:memory-image-generate", (_event, day) => ({
+    id: `${day}-generated`, date: day, filename: "generated.png",
+  }));
+  ipcMain.handle("jarvis:image-settings-get", () => ({
+    baseUrl: "https://images.example/v1",
+    modelName: "gpt-image-1.5",
+    hasApiKey: true,
+  }));
+  ipcMain.handle("jarvis:image-settings-save", (_event, value) => ({
+    baseUrl: value.baseUrl,
+    modelName: value.modelName,
+    hasApiKey: true,
+  }));
   ipcMain.handle("jarvis:toggle-screen-privacy", () => ({
     phase: "running", monitoring: true, screenBlocked: true,
   }));
@@ -98,16 +139,62 @@ app.whenReady().then(async () => {
     }
   );
   await capture(
+    "launcher-memory-image",
+    { width: 520, height: 760, useContentSize: true },
+    "launcher.html",
+    async window => {
+      await window.webContents.executeJavaScript("document.querySelector('[data-view=memory]').click()");
+      await new Promise(resolve => setTimeout(resolve, 250));
+      await window.webContents.executeJavaScript("document.querySelector('[data-memory-mode=image]').click()");
+      await new Promise(resolve => setTimeout(resolve, 250));
+      const state = await window.webContents.executeJavaScript(`(() => {
+        const image = document.querySelector('#memory-image-preview');
+        return {
+          visible: !document.querySelector('#memory-image-view').hidden,
+          loaded: image.complete && image.naturalWidth > 0,
+          history: document.querySelectorAll('.memory-image-thumb').length,
+        };
+      })()`);
+      if (!state.visible || !state.loaded || state.history !== 2) {
+        throw new Error(`memory image rendering failed: ${JSON.stringify(state)}`);
+      }
+    }
+  );
+  await capture(
+    "launcher-image-settings",
+    { width: 520, height: 760, useContentSize: true },
+    "launcher.html",
+    async window => {
+      await window.webContents.executeJavaScript("document.querySelector('#memory-image-settings').click()");
+      await new Promise(resolve => setTimeout(resolve, 180));
+      const state = await window.webContents.executeJavaScript(`(() => {
+        const dialog = document.querySelector('#image-settings-dialog');
+        const bounds = dialog.getBoundingClientRect();
+        return {
+          open: dialog.open,
+          baseUrl: document.querySelector('#image-base-url').value,
+          keyPlaceholder: document.querySelector('#image-api-key').placeholder,
+          inViewport: bounds.top >= 0 && bounds.bottom <= innerHeight,
+        };
+      })()`);
+      if (!state.open || !state.inViewport || !state.baseUrl || !state.keyPlaceholder.includes("安全保存")) {
+        throw new Error(`image settings rendering failed: ${JSON.stringify(state)}`);
+      }
+    }
+  );
+  await capture(
     "launcher-memory-minimum",
     { width: 480, height: 700, useContentSize: true },
     "launcher.html",
     async window => {
       await window.webContents.executeJavaScript("document.querySelector('[data-view=memory]').click()");
       await new Promise(resolve => setTimeout(resolve, 250));
+      await window.webContents.executeJavaScript("document.querySelector('[data-memory-mode=image]').click()");
+      await new Promise(resolve => setTimeout(resolve, 120));
       const layout = await window.webContents.executeJavaScript(
-        "({ body: document.body.scrollWidth, viewport: innerWidth, footer: document.querySelector('.command-bar').getBoundingClientRect().bottom, height: innerHeight })"
+        "({ body: document.body.scrollWidth, viewport: innerWidth, footer: document.querySelector('.command-bar').getBoundingClientRect().bottom, imageRight: document.querySelector('#memory-image-view').getBoundingClientRect().right, height: innerHeight })"
       );
-      if (layout.body > layout.viewport || layout.footer > layout.height + 1) {
+      if (layout.body > layout.viewport || layout.footer > layout.height + 1 || layout.imageRight > layout.viewport + 1) {
         throw new Error(`memory minimum layout overflow: ${JSON.stringify(layout)}`);
       }
     }

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from jarvis_backend.orchestrator.lifecycle import LifecycleState
 
@@ -77,6 +77,21 @@ class MemoryDayResponse(BaseModel):
     event_count: int
     generated: bool
     content: str
+
+
+class MemoryImageGenerateRequest(BaseModel):
+    base_url: str = Field(min_length=8, max_length=2048)
+    api_key: SecretStr
+    model_name: str = Field(min_length=1, max_length=256)
+
+
+class MemoryImageResponse(BaseModel):
+    id: str
+    date: str
+    filename: str
+    created_at: str
+    model_name: str
+    content_url: str
 
 
 class MemorySummaryResponse(BaseModel):

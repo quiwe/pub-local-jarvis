@@ -23,6 +23,18 @@ const memoryDocument = $("#memory-document");
 const memoryDays = $("#memory-days");
 const memoryState = $("#memory-state");
 const memoryDot = $("#memory-dot");
+const memoryImageView = $("#memory-image-view");
+const memoryImagePreview = $("#memory-image-preview");
+const memoryImageEmpty = $("#memory-image-empty");
+const memoryImageHistory = $("#memory-image-history");
+const memoryImageStamp = $("#memory-image-stamp");
+const imageSettingsDialog = $("#image-settings-dialog");
+const imageSettingsForm = $("#image-settings-form");
+const imageBaseUrl = $("#image-base-url");
+const imageApiKey = $("#image-api-key");
+const imageModelName = $("#image-model-name");
+const imageSettingsState = $("#image-settings-state");
+const imageSettingsError = $("#image-settings-error");
 let currentPhase = "idle";
 let currentView = "overview";
 let currentMemoryDay = "";
@@ -30,6 +42,9 @@ let today = "";
 let gameProfiles = [];
 let editingProfileId = "";
 let persistedProfileIds = new Set();
+let memoryMode = "text";
+let currentMemoryImages = [];
+let selectedMemoryImageId = "";
 
 const sceneNames = { game: "游戏", course: "网课", other: "其他" };
 const phaseView = {
@@ -126,6 +141,60 @@ function setMemoryEmpty(message) {
   refreshIcons();
 }
 
+function memoryImageUrl(item) {
+  const value = String(item?.content_url || "");
+  if (/^(?:data:|https?:\/\/)/i.test(value)) return value;
+  return value ? `http://127.0.0.1:8000${value}` : "";
+}
+
+function selectMemoryImage(item) {
+  selectedMemoryImageId = item?.id || "";
+  const url = memoryImageUrl(item);
+  memoryImagePreview.hidden = !url;
+  memoryImageEmpty.hidden = Boolean(url);
+  memoryImageStamp.textContent = item
+    ? `${item.date} · ${new Date(item.created_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`
+    : "";
+  if (url) memoryImagePreview.src = url;
+  memoryImageHistory.querySelectorAll(".memory-image-thumb").forEach(button => {
+    button.classList.toggle("active", button.dataset.imageId === selectedMemoryImageId);
+  });
+}
+
+function renderMemoryImages(images) {
+  currentMemoryImages = Array.isArray(images) ? images : [];
+  memoryImageHistory.replaceChildren();
+  for (const item of currentMemoryImages) {
+    const button = document.createElement("button");
+    const image = document.createElement("img");
+    button.type = "button";
+    button.className = "memory-image-thumb";
+    button.dataset.imageId = item.id;
+    button.title = new Date(item.created_at).toLocaleString("zh-CN");
+    image.src = memoryImageUrl(item);
+    image.alt = `${item.date} 日程图`;
+    button.append(image);
+    button.addEventListener("click", () => selectMemoryImage(item));
+    memoryImageHistory.append(button);
+  }
+  const selected = currentMemoryImages.find(item => item.id === selectedMemoryImageId)
+    || currentMemoryImages[0]
+    || null;
+  selectMemoryImage(selected);
+}
+
+function setMemoryMode(mode) {
+  memoryMode = mode === "image" ? "image" : "text";
+  document.querySelectorAll("[data-memory-mode]").forEach(button => {
+    const active = button.dataset.memoryMode === memoryMode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  memoryDocument.hidden = memoryMode !== "text";
+  memoryImageView.hidden = memoryMode !== "image";
+  refreshIcons();
+}
+
 function renderMarkdown(content) {
   const fragment = document.createDocumentFragment();
   for (const rawLine of String(content).split(/\r?\n/)) {
@@ -157,13 +226,17 @@ async function loadMemoryDay(day) {
   currentMemoryDay = day;
   memoryDays.querySelectorAll(".memory-day").forEach(button => button.classList.toggle("active", button.dataset.day === day));
   memoryState.textContent = "正在读取";
-  try {
-    const result = await window.jarvis.getMemoryDay(day);
-    renderMarkdown(result.content);
-    memoryState.textContent = `${formatDay(day)} · ${result.event_count} 条活动`;
-  } catch (error) {
+  const [memoryResult, imagesResult] = await Promise.allSettled([
+    window.jarvis.getMemoryDay(day),
+    window.jarvis.getMemoryImages(day),
+  ]);
+  renderMemoryImages(imagesResult.status === "fulfilled" ? imagesResult.value : []);
+  if (memoryResult.status === "fulfilled") {
+    renderMarkdown(memoryResult.value.content);
+    memoryState.textContent = `${formatDay(day)} · ${memoryResult.value.event_count} 条活动`;
+  } else {
     setMemoryEmpty("这一天还没有生成记忆");
-    memoryState.textContent = "暂无文档";
+    memoryState.textContent = currentMemoryImages.length ? "已有日程图" : "暂无文档";
   }
 }
 
@@ -179,7 +252,7 @@ function renderMemoryDays(days) {
     label.textContent = item.date === today ? "今天" : formatDay(item.date);
     count.textContent = `${item.event_count}`;
     button.append(label, count);
-    button.addEventListener("click", () => item.generated ? loadMemoryDay(item.date) : generateMemory(item.date));
+    button.addEventListener("click", () => loadMemoryDay(item.date));
     memoryDays.append(button);
   }
   if (!days.length) {
@@ -198,16 +271,19 @@ async function refreshMemory() {
     $("#memory-today-label").textContent = formatDay(today);
     $("#memory-today-count").textContent = String(status.today_event_count);
     renderMemoryDays(days);
-    const selected = days.find(item => item.date === currentMemoryDay && item.generated)
-      || days.find(item => item.date === today && item.generated)
-      || days.find(item => item.generated);
+    const selected = days.find(item => item.date === currentMemoryDay)
+      || days.find(item => item.date === today)
+      || days[0];
     if (selected) await loadMemoryDay(selected.date);
     else {
       currentMemoryDay = "";
+      renderMemoryImages([]);
       setMemoryEmpty(status.today_event_count ? "点击生成今日记忆" : "今天还没有可记录的活动");
       memoryState.textContent = status.today_event_count ? "已有活动等待生成" : "今日暂无记录";
     }
   } catch (error) {
+    currentMemoryDay = "";
+    renderMemoryImages([]);
     setMemoryEmpty("启动 AI 贾维斯后可查看记忆");
     memoryState.textContent = "后端未连接";
   }
@@ -226,6 +302,42 @@ async function generateMemory(day = today) {
     await refreshMemory();
   } catch (error) {
     memoryState.textContent = error.message || "生成失败";
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function openImageSettings() {
+  const settings = await window.jarvis.getImageGenerationSettings();
+  imageBaseUrl.value = settings.baseUrl || "";
+  imageModelName.value = settings.modelName || "";
+  imageApiKey.value = "";
+  imageApiKey.placeholder = settings.hasApiKey ? "已安全保存，留空沿用" : "sk-...";
+  imageApiKey.required = !settings.hasApiKey;
+  imageSettingsState.textContent = settings.hasApiKey ? "配置已保存" : "等待配置";
+  imageSettingsError.textContent = "";
+  imageSettingsDialog.showModal();
+  imageBaseUrl.focus();
+}
+
+async function generateMemoryImage(day = currentMemoryDay || today) {
+  if (!day) return;
+  const settings = await window.jarvis.getImageGenerationSettings();
+  if (!settings.hasApiKey || !settings.baseUrl || !settings.modelName) {
+    await openImageSettings();
+    return;
+  }
+  const button = $("#memory-image-generate");
+  button.disabled = true;
+  memoryState.textContent = "正在整理回顾并生成日程图";
+  try {
+    const result = await window.jarvis.generateMemoryImage(day);
+    selectedMemoryImageId = result.id;
+    setMemoryMode("image");
+    await refreshMemory();
+    memoryState.textContent = `${formatDay(day)} · 日程图已保存`;
+  } catch (error) {
+    memoryState.textContent = error.message || "日程图生成失败";
   } finally {
     button.disabled = false;
   }
@@ -252,6 +364,37 @@ $("#console-button").addEventListener("click", () => window.jarvis.openConsole()
 document.querySelectorAll(".view-tab").forEach(tab => tab.addEventListener("click", () => switchView(tab.dataset.view)));
 $("#memory-refresh").addEventListener("click", refreshMemory);
 $("#memory-generate").addEventListener("click", () => generateMemory(today));
+$("#memory-image-generate").addEventListener("click", () => generateMemoryImage());
+$("#memory-image-settings").addEventListener("click", openImageSettings);
+document.querySelectorAll("[data-memory-mode]").forEach(button => {
+  button.addEventListener("click", () => setMemoryMode(button.dataset.memoryMode));
+});
+
+$("#image-settings-close").addEventListener("click", () => imageSettingsDialog.close());
+imageSettingsDialog.addEventListener("cancel", event => {
+  event.preventDefault();
+  imageSettingsDialog.close();
+});
+imageSettingsDialog.addEventListener("click", event => {
+  if (event.target === imageSettingsDialog) imageSettingsDialog.close();
+});
+imageSettingsForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  imageSettingsError.textContent = "正在保存";
+  imageSettingsError.classList.add("neutral");
+  try {
+    const settings = await window.jarvis.saveImageGenerationSettings({
+      baseUrl: imageBaseUrl.value,
+      apiKey: imageApiKey.value,
+      modelName: imageModelName.value,
+    });
+    imageSettingsState.textContent = settings.hasApiKey ? "配置已保存" : "等待配置";
+    imageSettingsDialog.close();
+  } catch (error) {
+    imageSettingsError.classList.remove("neutral");
+    imageSettingsError.textContent = error.message || "保存失败";
+  }
+});
 
 function updateProfilePromptCount() {
   profilePromptCount.textContent = `${profilePrompt.value.length} / 8000`;
