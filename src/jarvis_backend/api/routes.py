@@ -16,6 +16,8 @@ from .schemas import (
     HealthResponse,
     MemoryClearRequest,
     MemoryClearResponse,
+    MemoryDayResponse,
+    MemoryDaySummary,
     MemoryStatusResponse,
     MemorySummaryResponse,
     SceneObservation,
@@ -84,6 +86,39 @@ async def memory_clear(body: MemoryClearRequest, request: Request) -> MemoryClea
         raise HTTPException(status.HTTP_409_CONFLICT, "memory clear requires confirmation")
     await service(request).clear_memory()
     return MemoryClearResponse(cleared=True)
+
+
+@router.get("/memory/days", response_model=list[MemoryDaySummary])
+async def memory_days(request: Request) -> list[MemoryDaySummary]:
+    return [
+        MemoryDaySummary.model_validate(item)
+        for item in await service(request).list_daily_memories()
+    ]
+
+
+@router.get("/memory/days/{day}", response_model=MemoryDayResponse)
+async def memory_day(day: str, request: Request) -> MemoryDayResponse:
+    try:
+        result = await service(request).get_daily_memory(day)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "memory day not found") from exc
+    return MemoryDayResponse.model_validate(result)
+
+
+@router.post("/memory/days/{day}/generate", response_model=MemoryDayResponse)
+async def memory_day_generate(day: str, request: Request) -> MemoryDayResponse:
+    try:
+        result = await service(request).generate_daily_memory(day)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    except (RuntimeError, TimeoutError) as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "本地模型暂时无法生成记忆总结，请稍后重试",
+        ) from exc
+    return MemoryDayResponse.model_validate(result)
 
 
 def course_response(state: object) -> CourseResponse:

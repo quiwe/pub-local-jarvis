@@ -5,6 +5,7 @@
 #include "jarvis/scheduler.hpp"
 #include "jarvis/worker.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -109,6 +110,12 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
     }
     return false;
   }
+  std::size_t perception_request_count() {
+    std::lock_guard lock(mutex_);
+    return std::count_if(prompts_.begin(), prompts_.end(), [](const auto& item) {
+      return item.first >= (std::uint64_t{1} << 63U);
+    });
+  }
  private:
   bool ready_{};
   std::unordered_map<std::uint64_t, bool> contexts_;
@@ -153,6 +160,31 @@ int main() {
   VideoFrame frame{2, 2, 8, 0, std::vector<std::byte>(16)};
   FrameDeduplicator dedupe; require(dedupe.changed(frame), "first frame changes"); require(!dedupe.changed(frame), "duplicate frame ignored");
   frame.bgra[0] = std::byte{255}; require(dedupe.changed(frame), "changed frame detected");
+  VideoFrame large_frame{64, 36, 256, 0, std::vector<std::byte>(64 * 36 * 4)};
+  FrameChangeDetector visual_changes;
+  require(visual_changes.changed(large_frame), "first visual sample changes");
+  large_frame.bgra[0] = std::byte{255};
+  require(!visual_changes.changed(large_frame), "localized pixel noise is ignored");
+  for (std::size_t sample = 1; sample <= 4; ++sample) {
+    const auto at = sample * 2 * 4;
+    large_frame.bgra[at] = std::byte{255};
+    large_frame.bgra[at + 1] = std::byte{255};
+    large_frame.bgra[at + 2] = std::byte{255};
+  }
+  require(!visual_changes.changed(large_frame), "small changes accumulate below threshold");
+  for (std::size_t sample = 5; sample <= 8; ++sample) {
+    const auto at = sample * 2 * 4;
+    large_frame.bgra[at] = std::byte{255};
+    large_frame.bgra[at + 1] = std::byte{255};
+    large_frame.bgra[at + 2] = std::byte{255};
+  }
+  require(visual_changes.changed(large_frame), "accumulated visual change is detected");
+  for (std::size_t index = 0; index < large_frame.bgra.size() / 2; index += 4) {
+    large_frame.bgra[index] = std::byte{255};
+    large_frame.bgra[index + 1] = std::byte{255};
+    large_frame.bgra[index + 2] = std::byte{255};
+  }
+  require(visual_changes.changed(large_frame), "broad visual change is detected");
 
   auto runtime = make_stub_omni_runtime(); runtime->load("stub");
   std::mutex mutex; std::vector<InferenceResult> results;
@@ -197,6 +229,8 @@ int main() {
           "monitoring starts with capture devices");
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
   require(recording_ptr->received_perception(), "monitoring schedules structured perception");
+  require(recording_ptr->perception_request_count() == 2,
+          "unchanged frames do not schedule repeated perception");
   require(recording_ptr->game_generation_is_text_only(),
           "game generation does not resend classification media");
   worker.submit_prompt(21, "describe context");

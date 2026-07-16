@@ -241,7 +241,7 @@ function setScene(sceneValue) {
     if (petWindow.isVisible()) petWindow.hide();
     showBarrage();
     if (previousScene !== "game") {
-      showBarrage(`已加载《${selectedGameProfile().name}》陪伴方案`);
+      showBarrage(`已加载《${selectedGameProfile().name}》游戏方案`);
     }
   } else {
     barrageWindow.hide();
@@ -347,6 +347,9 @@ async function toggleScreenPrivacy() {
 
 function handleBackendEvent(event) {
   const payload = event && event.payload ? event.payload : {};
+  if (event && (event.topic === "memory.activity.recorded" || event.topic === "memory.day.generated")) {
+    send(launcherWindow, "jarvis:memory-updated", payload);
+  }
   if (event && event.topic === "course.started") {
     activeCourseSessionId = payload.id || "active-course";
   } else if (
@@ -361,6 +364,10 @@ function handleBackendEvent(event) {
       setScene(resolveDisplayScene(effect.scene));
     }
     if (effect.type === "bubble" && !state.screenBlocked) showBubble(effect);
+    if (effect.type === "idle" && !state.screenBlocked) {
+      if (state.scene === "game") showBarrage(effect.text);
+      else showBubble(effect);
+    }
     if (effect.type === "barrage") {
       if (state.scene !== "game" || state.screenBlocked) continue;
       showBarrage(effect.text);
@@ -452,6 +459,10 @@ function registerIpc() {
   ipcMain.handle("jarvis:resume", resumeMonitoring);
   ipcMain.handle("jarvis:open-console", openConsole);
   ipcMain.handle("jarvis:get-state", () => ({ ...state }));
+  ipcMain.handle("jarvis:memory-status", () => manager.memoryStatus());
+  ipcMain.handle("jarvis:memory-days", () => manager.memoryDays());
+  ipcMain.handle("jarvis:memory-day", (_event, day) => manager.memoryDay(day));
+  ipcMain.handle("jarvis:memory-generate", (_event, day) => manager.generateMemoryDay(day));
   ipcMain.handle("jarvis:get-game-profiles", () => ({
     selectedId: gameSettings.selectedId,
     profiles: gameSettings.profiles.map(item => ({ ...item })),

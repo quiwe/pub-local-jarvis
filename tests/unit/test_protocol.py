@@ -3,6 +3,7 @@ import zlib
 
 import pytest
 
+from jarvis_backend.native.client import NamedPipeNativeClient
 from jarvis_backend.native.protocol import (
     HEADER,
     MAGIC,
@@ -50,3 +51,33 @@ def test_protocol_rejects_wrong_version_and_corruption() -> None:
     valid[-1] ^= 1
     with pytest.raises(ProtocolError, match="checksum"):
         decode_frame(bytes(valid))
+
+
+def test_native_monitoring_event_envelope_is_decoded() -> None:
+    event = NamedPipeNativeClient._parse_native_event(
+        0xFFFFFFFFFFFFFFFF,
+        {
+            "text": json.dumps(
+                {"native_event": "screen.idle", "idle_seconds": 600, "sequence": 2}
+            )
+        }
+    )
+
+    assert event == {
+        "type": "screen.idle",
+        "idle_seconds": 600,
+        "sequence": 2,
+    }
+    assert (
+        NamedPipeNativeClient._parse_native_event(
+            1 << 63,
+            {"text": '{"native_event":"screen.idle","sequence":1}'},
+        )
+        is None
+    )
+    assert (
+        NamedPipeNativeClient._parse_native_event(
+            0xFFFFFFFFFFFFFFFF, {"text": "ordinary result"}
+        )
+        is None
+    )

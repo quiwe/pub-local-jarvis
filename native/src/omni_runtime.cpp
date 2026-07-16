@@ -175,7 +175,7 @@ class RealOmniRuntime final : public IOmniRuntime {
     params_.n_ctx = 4096;
     params_.n_batch = 512;
     params_.n_ubatch = 256;
-    params_.n_predict = 256;
+    params_.n_predict = 384;
     params_.n_gpu_layers = 99;
     params_.cpuparams.n_threads = std::max(1, common_cpu_get_num_physical_cores());
     params_.cpuparams_batch.n_threads = params_.cpuparams.n_threads;

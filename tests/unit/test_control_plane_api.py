@@ -1,12 +1,16 @@
 import base64
 import json
+import re
 import time
+from datetime import UTC, datetime
 
+import pytest
 from fastapi.testclient import TestClient
 
 import jarvis_backend.orchestrator.service as service_module
 from jarvis_backend.app import create_app
 from jarvis_backend.courses import CourseStatus
+from jarvis_backend.memory import MemoryEvent
 from jarvis_backend.settings import CourseSettings, MemorySettings, Settings
 
 
@@ -18,6 +22,34 @@ def make_client(tmp_path):
         ),
     )
     return TestClient(create_app(settings=settings))
+
+
+def test_daily_memory_activity_categories_use_observed_content():
+    def category(text: str, scene: str = "other") -> str:
+        event = MemoryEvent("id", "2026-07-16T00:00:00Z", "activity", text, {"scene": scene})
+        return service_module.OrchestrationService._memory_activity_category(event)
+
+    assert category("桌面显示浏览器和文件管理器图标，界面静止无明显操作。") == "基本无操作"
+    assert category("科幻视频中飞船穿越星云，无交互元素或课程内容。", "course") == (
+        "观看视频或游戏画面"
+    )
+    assert category("《我的世界》第一人称视角，玩家正在用镐子挖掘方块。", "course") == (
+        "玩游戏"
+    )
+    assert category("正在使用在线视频裁剪器处理视频文件。") == "媒体处理"
+    assert category("浏览器显示 Bilibili 游戏攻略搜索结果。", "game") == "上网浏览"
+    assert category("网课正在讲解 C++ 内存对齐，并整理学习笔记。") == "课程学习"
+
+    events = [
+        MemoryEvent("1", "2026-07-16T08:00:00Z", "activity", "编辑项目代码。", {}),
+        MemoryEvent(
+            "2", "2026-07-16T08:02:00Z", "activity", "浏览 Bilibili 游戏攻略搜索结果。", {}
+        ),
+        MemoryEvent("3", "2026-07-16T08:04:00Z", "activity", "调试项目代码。", {}),
+    ]
+    assert "上网浏览1条" in (
+        service_module.OrchestrationService._compact_memory_timeline(events)
+    )
 
 
 def test_memory_status_summarize_and_confirmed_clear(tmp_path):
@@ -39,6 +71,192 @@ def test_memory_status_summarize_and_confirmed_clear(tmp_path):
         topics = [event["topic"] for event in client.get("/api/v1/events").json()]
         assert "memory.summarized" in topics
         assert "memory.cleared" in topics
+
+
+def test_perception_implicitly_maintains_daily_memory_and_deduplicates(
+    tmp_path, monkeypatch
+):
+    clock = [100.0]
+    monkeypatch.setattr(service_module.time, "monotonic", lambda: clock[0])
+    with make_client(tmp_path) as client:
+        native = client.app.state.orchestrator.native_client
+        summary_prompts = []
+
+        async def summarize(method, payload):
+            assert method == "ask"
+            summary_prompts.append(payload["text"])
+            latest = max(re.findall(r"\b\d{2}:\d{2}\b", payload["text"]))
+            return {
+                "text": (
+                    "10:00至10:05（约5分钟），编辑 AI 贾维斯的记忆系统代码。"
+                    f"10:05至{latest}，运行自动化测试并检查结果。"
+                )
+            }
+
+        monkeypatch.setattr(native, "request", summarize)
+
+        def perceive(request_id, observation):
+            client.portal.call(
+                native.emit,
+                {
+                    "type": "perception.completed",
+                    "request_id": request_id,
+                    "text": json.dumps(
+                        {
+                            "scene": "other",
+                            "confidence": 0.91,
+                            "observation": observation,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            )
+            time.sleep(0.02)
+
+        perceive(1, "用户正在编辑 AI 贾维斯的记忆系统代码。")
+        perceive(2, "用户正在编辑 AI 贾维斯的记忆系统代码。")
+        assert client.get("/api/v1/memory/status").json()["today_event_count"] == 1
+
+        clock[0] += 121
+        perceive(3, "用户正在运行自动化测试并检查测试结果。")
+        status = client.get("/api/v1/memory/status").json()
+        assert status["today_event_count"] == 2
+        assert status["today_generated"] is False
+
+        days = client.get("/api/v1/memory/days").json()
+        assert days == [
+            {
+                "date": status["today"],
+                "event_count": 2,
+                "generated": False,
+                "preview": "用户正在编辑 AI 贾维斯的记忆系统代码。",
+            }
+        ]
+        generated = client.post(
+            f"/api/v1/memory/days/{status['today']}/generate"
+        ).json()
+        assert generated["event_count"] == 2
+        assert "10:00至10:05" in generated["content"]
+        assert "运行自动化测试并检查结果" in generated["content"]
+        assert len(summary_prompts) == 1
+        assert "只输出一个连贯正文段落" in summary_prompts[0]
+        assert "用户正在编辑 AI 贾维斯的记忆系统代码" in summary_prompts[0]
+        assert "用户正在运行自动化测试" in summary_prompts[0]
+        assert client.get(
+            f"/api/v1/memory/days/{status['today']}"
+        ).json() == generated
+        assert client.get("/api/v1/memory/days/not-a-date").status_code == 422
+
+
+def test_daily_memory_generation_reports_local_model_failure(tmp_path, monkeypatch):
+    with make_client(tmp_path) as client:
+        orchestrator = client.app.state.orchestrator
+        orchestrator.memory.append("activity", "用户正在浏览项目文件。", {"scene": "other"})
+
+        async def fail(_method, _payload):
+            raise TimeoutError("model timed out")
+
+        monkeypatch.setattr(orchestrator.native_client, "request", fail)
+        today = client.get("/api/v1/memory/status").json()["today"]
+        response = client.post(f"/api/v1/memory/days/{today}/generate")
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == "本地模型暂时无法生成记忆总结，请稍后重试"
+
+
+async def test_large_daily_memory_is_compacted_before_single_model_summary(
+    tmp_path, monkeypatch
+):
+    settings = Settings(
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(sessions_root=tmp_path / "sessions"),
+    )
+    orchestrator = create_app(settings=settings).state.orchestrator
+    for index in range(90):
+        orchestrator.memory.append(
+            "activity",
+            f"用户持续浏览项目文件并检查模块关系，这是第 {index + 1} 条连续观察记录。",
+            {"scene": "other"},
+            timestamp=datetime.now(UTC),
+        )
+    prompts = []
+
+    async def summarize(method, payload):
+        assert method == "ask"
+        prompts.append(payload)
+        latest = max(re.findall(r"\b\d{2}:\d{2}\b", payload["text"]))
+        return {"text": f"10:00至{latest}，浏览项目文件并检查模块关系。"}
+
+    monkeypatch.setattr(orchestrator.native_client, "request", summarize)
+    today = datetime.now().astimezone().date().isoformat()
+    result = await orchestrator.generate_daily_memory(today)
+
+    assert len(prompts) == 1
+    assert all(len(item["text"]) < 8000 for item in prompts)
+    assert all(item["_timeout_seconds"] == 120 for item in prompts)
+    assert "[项目工作，记录90条]" in prompts[0]["text"]
+    assert "浏览项目文件并检查模块关系" in result["content"]
+
+
+async def test_incomplete_daily_summary_does_not_replace_existing_document(
+    tmp_path, monkeypatch
+):
+    settings = Settings(
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(sessions_root=tmp_path / "sessions"),
+    )
+    orchestrator = create_app(settings=settings).state.orchestrator
+    event = orchestrator.memory.append(
+        "activity",
+        "用户正在编写并调试项目代码。",
+        {"scene": "other"},
+        timestamp=datetime.now(UTC),
+    )
+    local_time = datetime.fromisoformat(event.timestamp.replace("Z", "+00:00")).astimezone()
+    orchestrator.memory.write_daily_memory(local_time.date(), "# existing\n\n完整的旧总结。")
+
+    async def summarize(_method, _payload):
+        return {"text": "10:00至11:15，进行项目开发，中间窗口展示"}
+
+    monkeypatch.setattr(orchestrator.native_client, "request", summarize)
+    with pytest.raises(RuntimeError, match="latest event"):
+        await orchestrator.generate_daily_memory(local_time.date().isoformat())
+
+    assert orchestrator.memory.read_daily_memory(local_time.date()) == (
+        "# existing\n\n完整的旧总结。\n"
+    )
+
+
+async def test_recent_activity_is_not_duplicated_after_restart(tmp_path, monkeypatch):
+    clock = [50.0]
+    monkeypatch.setattr(service_module.time, "monotonic", lambda: clock[0])
+    settings = Settings(
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(sessions_root=tmp_path / "sessions"),
+    )
+    first = create_app(settings=settings).state.orchestrator
+    first.memory.append(
+        "activity",
+        "用户正在整理项目文档与开发记录。",
+        {"scene": "other", "confidence": 0.9, "source": "perception"},
+    )
+
+    restarted = create_app(settings=settings).state.orchestrator
+    clock[0] += 30
+    await restarted._handle_perception(
+        {
+            "text": json.dumps(
+                {
+                    "scene": "other",
+                    "confidence": 0.9,
+                    "observation": "用户正在整理项目文档与开发记录。",
+                },
+                ensure_ascii=False,
+            )
+        }
+    )
+
+    assert len(restarted.memory.events()) == 1
 
 
 def test_course_start_finish_and_query(tmp_path):

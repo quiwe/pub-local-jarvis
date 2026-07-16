@@ -49,6 +49,23 @@ class MemoryStatusResponse(BaseModel):
     event_count: int
     summary: str | None
     fact_count: int
+    today: str
+    today_event_count: int
+    today_generated: bool
+
+
+class MemoryDaySummary(BaseModel):
+    date: str
+    event_count: int
+    generated: bool
+    preview: str
+
+
+class MemoryDayResponse(BaseModel):
+    date: str
+    event_count: int
+    generated: bool
+    content: str
 
 
 class MemorySummaryResponse(BaseModel):

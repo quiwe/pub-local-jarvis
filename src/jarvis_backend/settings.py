@@ -53,6 +53,10 @@ class InteractionSettings(BaseModel):
 
 class MemorySettings(BaseModel):
     root: Path = Path("memory")
+    activity_min_confidence: float = Field(default=0.6, ge=0, le=1)
+    activity_min_interval_seconds: float = Field(default=120.0, ge=0)
+    activity_duplicate_window_seconds: float = Field(default=900.0, ge=0)
+    summary_timeout_seconds: float = Field(default=120.0, gt=0, le=600)
 
 
 class CourseSettings(BaseModel):

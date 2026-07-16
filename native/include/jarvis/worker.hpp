@@ -64,6 +64,7 @@ class Worker {
   std::string game_profile_prompt_{};
   std::size_t game_barrage_angle_index_{};
   std::atomic_uint64_t observation_id_{std::uint64_t{1} << 63U};
+  void emit_monitoring_event(std::string payload);
 #endif
   mutable std::mutex mutex_{};
   std::atomic<WorkerState> state_{WorkerState::stopped};

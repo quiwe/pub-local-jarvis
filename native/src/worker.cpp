@@ -1,6 +1,7 @@
 #include "jarvis/worker.hpp"
 
 #include "jarvis/audio.hpp"
+#include "jarvis/fingerprint.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -9,6 +10,7 @@
 #include <chrono>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <string_view>
 #include <thread>
 #include <utility>
@@ -20,6 +22,9 @@
 namespace jarvis {
 namespace {
 constexpr auto kPerceptionInterval = std::chrono::seconds(3);
+constexpr auto kPerceptionHeartbeat = std::chrono::minutes(5);
+constexpr auto kIdleReminderAfter = std::chrono::minutes(10);
+constexpr auto kIdleReminderRepeat = std::chrono::minutes(15);
 constexpr std::size_t kRecentPerceptionLimit = 4;
 constexpr std::string_view kTextOnlyPrefix = "[[JARVIS_TEXT_ONLY]]\n";
 constexpr std::array<std::string_view, 6> kGameBarrageAngles{
@@ -30,6 +35,13 @@ constexpr std::array<std::string_view, 6> kGameBarrageAngles{
     "轻微吐槽：只调侃当下操作或局势，用陈述句，不挖苦用户。",
     "换个对象：主动避开最近弹幕反复关注的主体，从其他可靠信息切入。",
 };
+
+bool has_audible_signal(const std::vector<float>& samples) noexcept {
+  if (samples.empty()) return false;
+  double energy{};
+  for (const auto sample : samples) energy += double(sample) * double(sample);
+  return energy / static_cast<double>(samples.size()) >= 0.000004;
+}
 constexpr std::string_view kSceneClassificationPrompt = R"(你是本地桌面助手“贾维斯”的场景分类与非游戏内容生成器。结合当前屏幕、系统音频和最近客观观察判断场景。只返回一个合法 JSON 对象，禁止 Markdown、解释和额外文字：
 {"scene":"game|course|other","confidence":0.0,"observation":"","course_transcript":"","course_note":"","course_title":"","course_interaction":"","capture_keyframe":false,"keyframe_note":"","assistant_candidates":[]}
 
@@ -268,6 +280,11 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
     }
     auto deadline = std::chrono::steady_clock::now();
     auto next_perception = deadline;
+    auto last_perception = deadline - kPerceptionHeartbeat;
+    auto last_visual_change = deadline;
+    auto next_idle_reminder = deadline + kIdleReminderAfter;
+    std::uint32_t idle_reminder_sequence{};
+    FrameChangeDetector screen_changes;
     bool first_frame_logged = false;
     auto last_capture_error = std::chrono::steady_clock::time_point{};
     std::vector<float> rolling_audio;
@@ -331,6 +348,7 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
           latest_audio.insert(
               latest_audio.begin(), latest_audio_samples - latest_audio.size(), 0.0F);
         }
+        const bool audio_active = has_audible_signal(latest_audio);
         auto latest_audio_window =
             std::make_shared<std::vector<float>>(std::move(latest_audio));
         if (frame) {
@@ -346,7 +364,35 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
             latest_foreground_window_ = foreground_window;
           }
           const auto now = std::chrono::steady_clock::now();
-          if (now >= next_perception && scheduler_ && !scheduler_->busy()) {
+          const bool visually_changed = foreground_changed || screen_changes.changed(*frame);
+          bool course_active = false;
+          {
+            std::lock_guard lock(mutex_);
+            course_active = !recent_perceptions_.empty() &&
+                            recent_perceptions_.back().scene == "course";
+          }
+          const bool active_course_audio = course_active && audio_active;
+          if (visually_changed || active_course_audio) {
+            last_visual_change = now;
+            next_idle_reminder = now + kIdleReminderAfter;
+            idle_reminder_sequence = 0;
+          } else if (now >= next_idle_reminder) {
+            ++idle_reminder_sequence;
+            const auto idle_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+                                          now - last_visual_change)
+                                          .count();
+            nlohmann::json event{{"native_event", "screen.idle"},
+                                 {"idle_seconds", idle_seconds},
+                                 {"sequence", idle_reminder_sequence}};
+            emit_monitoring_event(event.dump());
+            next_idle_reminder = now + kIdleReminderRepeat;
+          }
+          const bool heartbeat_due =
+              now - last_perception >= kPerceptionHeartbeat &&
+              now - last_visual_change < kIdleReminderAfter;
+          const bool should_analyze =
+              visually_changed || active_course_audio || heartbeat_due;
+          if (should_analyze && now >= next_perception && scheduler_ && !scheduler_->busy()) {
             std::string prompt(kSceneClassificationPrompt);
             {
               std::lock_guard lock(mutex_);
@@ -394,6 +440,7 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
                                      .audio_16khz_mono=
                                          std::move(perception_audio_window)},
                     Priority::normal});
+            last_perception = now;
             next_perception = now + kPerceptionInterval;
           }
         }
@@ -434,6 +481,17 @@ void Worker::stop_monitoring() noexcept {
   }
   if (audio_capture) audio_capture->stop();
   if (desktop) desktop->stop();
+}
+
+void Worker::emit_monitoring_event(std::string payload) {
+  LatestOnlyScheduler::Completion callback;
+  {
+    std::lock_guard lock(mutex_);
+    callback = completion_;
+  }
+  if (callback) {
+    callback({std::numeric_limits<std::uint64_t>::max(), std::move(payload), false});
+  }
 }
 #endif
 WorkerState Worker::state() const noexcept { return state_.load(); }

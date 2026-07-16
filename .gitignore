@@ -28,7 +28,7 @@ desktop/qa-output/
 config/local.toml
 models/
 .runtime/
-memory/
+/memory/
 /courses/
 *.gguf
 *.safetensors
@@ -47,3 +47,6 @@ memory/
 others/
 
 .omo/
+.agents/
+.claude/
+.codegraph

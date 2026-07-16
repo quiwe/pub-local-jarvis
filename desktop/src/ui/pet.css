@@ -35,6 +35,7 @@ html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background:
 .speech-bubble[data-tone="course"] .signal-dot { background: #d79424; }
 .speech-bubble[data-tone="error"] .signal-dot { background: #c95145; }
 .speech-bubble[data-tone="success"] .signal-dot { background: #2e9f62; }
+.speech-bubble[data-tone="idle"] .signal-dot { background: #d77b24; }
 .speech-bubble p { margin: 0; color: #20302f; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
 .speech-bubble button {
   position: relative;

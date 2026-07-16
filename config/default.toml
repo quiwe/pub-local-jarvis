@@ -35,6 +35,10 @@ game_barrage_similar_seconds = 8.0
 
 [memory]
 root = "memory"
+activity_min_confidence = 0.6
+activity_min_interval_seconds = 120
+activity_duplicate_window_seconds = 900
+summary_timeout_seconds = 120
 
 [courses]
 sessions_root = "courses/sessions"

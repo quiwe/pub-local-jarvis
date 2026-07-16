@@ -43,7 +43,12 @@ class BackendManager extends EventEmitter {
     });
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(body || `Backend request failed (${response.status})`);
+      let message = body;
+      try {
+        const value = JSON.parse(body);
+        if (typeof value.detail === "string") message = value.detail;
+      } catch (_) {}
+      throw new Error(message || `Backend request failed (${response.status})`);
     }
     return response.json();
   }
@@ -177,6 +182,25 @@ class BackendManager extends EventEmitter {
       method: "POST",
       body: JSON.stringify(payload),
       timeout: 15000,
+    });
+  }
+
+  memoryStatus() {
+    return this.request("/api/v1/memory/status");
+  }
+
+  memoryDays() {
+    return this.request("/api/v1/memory/days");
+  }
+
+  memoryDay(day) {
+    return this.request(`/api/v1/memory/days/${encodeURIComponent(day)}`);
+  }
+
+  generateMemoryDay(day) {
+    return this.request(`/api/v1/memory/days/${encodeURIComponent(day)}/generate`, {
+      method: "POST",
+      timeout: 10 * 60 * 1000,
     });
   }
 

@@ -45,3 +45,13 @@ test("keyframe requests remain backend directed", () => {
     [{ type: "capture", id: "lesson", timestamp_ms: 1200, note: "F=ma" }]
   );
 });
+
+test("idle screen events rotate focused reminders", () => {
+  const first = routeBackendEvent({ topic: "screen.idle", payload: { sequence: 1 } });
+  const second = routeBackendEvent({ topic: "screen.idle", payload: { sequence: 2 } });
+
+  assert.equal(first[0].type, "idle");
+  assert.equal(first[0].tone, "idle");
+  assert.match(first[0].text, /发呆/);
+  assert.match(second[0].text, /活动一下/);
+});

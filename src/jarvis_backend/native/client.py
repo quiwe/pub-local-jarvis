@@ -154,7 +154,11 @@ class NamedPipeNativeClient(NativeClient):
         async with self._write_lock:
             await asyncio.to_thread(self._write_exact, frame)
         try:
-            return await asyncio.wait_for(future, self.timeout)
+            request_timeout = max(
+                0.1,
+                min(600.0, float(payload.get("_timeout_seconds", self.timeout))),
+            )
+            return await asyncio.wait_for(future, request_timeout)
         finally:
             self._pending.pop(request_id, None)
             self._result_requests.discard(request_id)
@@ -196,14 +200,18 @@ class NamedPipeNativeClient(NativeClient):
                         }
                     )
                 elif frame.message_type == MessageType.RESULT:
-                    event_type = (
-                        "perception.completed"
-                        if frame.request_id >= (1 << 63)
-                        else "answer.completed"
-                    )
-                    await self._events.put(
-                        {"type": event_type, "request_id": frame.request_id, **data}
-                    )
+                    native_event = self._parse_native_event(frame.request_id, data)
+                    if native_event is not None:
+                        await self._events.put(native_event)
+                    else:
+                        event_type = (
+                            "perception.completed"
+                            if frame.request_id >= (1 << 63)
+                            else "answer.completed"
+                        )
+                        await self._events.put(
+                            {"type": event_type, "request_id": frame.request_id, **data}
+                        )
                 else:
                     await self._events.put(
                         {"type": "native.event", "request_id": frame.request_id, **data}
@@ -319,3 +327,23 @@ class NamedPipeNativeClient(NativeClient):
             return value if isinstance(value, dict) else {"value": value}
         except (UnicodeDecodeError, json.JSONDecodeError, ProtocolError):
             return {"ok": True, "text": frame.payload.decode("utf-8", errors="replace")}
+
+    @staticmethod
+    def _parse_native_event(
+        request_id: int, data: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        if request_id != 0xFFFFFFFFFFFFFFFF:
+            return None
+        text = data.get("text")
+        if not isinstance(text, str):
+            return None
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(value, dict):
+            return None
+        topic = value.pop("native_event", None)
+        if not isinstance(topic, str) or not topic:
+            return None
+        return {"type": topic, **value}

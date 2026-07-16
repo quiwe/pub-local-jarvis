@@ -34,3 +34,16 @@ def test_atomic_derivatives_hooks_and_clear(tmp_path):
     store.clear()
     assert store.events() == []
     assert store.read_summary() is None
+
+
+def test_daily_memory_documents_are_atomic_and_discoverable(tmp_path):
+    store = MemoryStore(tmp_path)
+    day = datetime.now().astimezone().date()
+    event = store.append("activity", "Working on the Jarvis memory system")
+
+    assert store.events_for_day(day) == [event]
+    assert store.memory_days() == [day]
+    path = store.write_daily_memory(day, f"# {day.isoformat()}\n\nMemory content")
+
+    assert path == tmp_path / "daily" / f"{day.isoformat()}.md"
+    assert store.read_daily_memory(day) == f"# {day.isoformat()}\n\nMemory content\n"

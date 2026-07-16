@@ -1,42 +1,57 @@
 "use strict";
 
-const startButton = document.querySelector("#start-button");
-const pauseButton = document.querySelector("#pause-button");
-const consoleButton = document.querySelector("#console-button");
-const phaseChip = document.querySelector("#phase-chip");
-const statusTitle = document.querySelector("#status-title");
-const statusDetail = document.querySelector("#status-detail");
-const monitorValue = document.querySelector("#monitor-value");
-const sceneValue = document.querySelector("#scene-value");
-const activityLog = document.querySelector("#activity-log");
-const gameProfileSummary = document.querySelector("#game-profile-summary");
-const profileButton = document.querySelector("#game-profile-button");
-const profileDialog = document.querySelector("#game-profile-dialog");
-const profileForm = document.querySelector("#game-profile-form");
-const profileSelect = document.querySelector("#profile-select");
-const profileName = document.querySelector("#profile-name");
-const profilePrompt = document.querySelector("#profile-prompt");
-const profileDelete = document.querySelector("#profile-delete");
-const profileError = document.querySelector("#profile-error");
+const $ = selector => document.querySelector(selector);
+const startButton = $("#start-button");
+const pauseButton = $("#pause-button");
+const phaseChip = $("#phase-chip");
+const statusTitle = $("#status-title");
+const statusDetail = $("#status-detail");
+const monitorValue = $("#monitor-value");
+const sceneValue = $("#scene-value");
+const activityLog = $("#activity-log");
+const gameProfileSummary = $("#game-profile-summary");
+const profileDialog = $("#game-profile-dialog");
+const profileForm = $("#game-profile-form");
+const profileSelect = $("#profile-select");
+const profileName = $("#profile-name");
+const profilePrompt = $("#profile-prompt");
+const profileDelete = $("#profile-delete");
+const profileError = $("#profile-error");
+const memoryDocument = $("#memory-document");
+const memoryDays = $("#memory-days");
+const memoryState = $("#memory-state");
+const memoryDot = $("#memory-dot");
 let currentPhase = "idle";
+let currentView = "overview";
+let currentMemoryDay = "";
+let today = "";
 let gameProfiles = [];
 
 const sceneNames = { game: "游戏", course: "网课", other: "其他" };
 const phaseView = {
-  idle: ["待启动", "系统处于待命状态", "启动后将连接本地模型并持续理解屏幕与系统声音。"],
-  starting: ["启动中", "正在启动本地 AI", "首次运行可能需要安装依赖和下载模型，请保持网络连接。"],
-  running: ["运行中", "持续感知已开启", "AI 贾维斯正在本机理解当前画面，并只在必要时介入。"],
+  idle: ["待启动", "系统处于待命状态", "启动后将连接本地模型，持续理解屏幕与系统声音。"],
+  starting: ["启动中", "正在启动本地 AI", "正在准备本地模型与运行环境。"],
+  running: ["运行中", "持续感知已开启", "AI 贾维斯正在本机理解当前环境，并只在必要时介入。"],
   paused: ["已暂停", "环境感知已暂停", "屏幕和系统音频当前不会被采集。"],
-  error: ["异常", "启动未完成", "请查看下方日志后重试。"],
+  error: ["异常", "启动未完成", "请查看运行日志后重试。"],
 };
+
+function refreshIcons() {
+  if (window.lucide) window.lucide.createIcons();
+}
 
 function now() {
   return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(new Date());
 }
 
+function formatDay(value) {
+  if (!value) return "--";
+  const date = new Date(`${value}T00:00:00`);
+  return new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "short" }).format(date);
+}
+
 function addLog(message) {
-  const lines = String(message).split(/\r?\n/).filter(Boolean);
-  for (const line of lines.slice(-3)) {
+  for (const line of String(message).split(/\r?\n/).filter(Boolean).slice(-3)) {
     const item = document.createElement("p");
     const time = document.createElement("time");
     const text = document.createElement("span");
@@ -59,7 +74,7 @@ function render(state) {
   statusDetail.textContent = state.error || detail;
   monitorValue.textContent = state.monitoring ? "感知中" : phase === "paused" ? "已暂停" : "未运行";
   sceneValue.textContent = state.scene === "game" ? `游戏 · ${state.gameProfile}` : sceneNames[state.scene] || "其他";
-  gameProfileSummary.textContent = `游戏陪伴方案：${state.gameProfile || "我的世界"}`;
+  gameProfileSummary.textContent = `游戏方案：${state.gameProfile || "我的世界"}`;
   startButton.hidden = phase === "running" || phase === "paused";
   startButton.disabled = false;
   const startIcon = document.createElement("i");
@@ -74,7 +89,134 @@ function render(state) {
   pauseIcon.setAttribute("data-lucide", phase === "paused" ? "play" : "pause");
   pauseLabel.textContent = phase === "paused" ? "继续感知" : "暂停感知";
   pauseButton.replaceChildren(pauseIcon, pauseLabel);
-  if (window.lucide) window.lucide.createIcons();
+  refreshIcons();
+}
+
+function switchView(name) {
+  currentView = name;
+  document.querySelectorAll(".view-tab").forEach(tab => tab.classList.toggle("active", tab.dataset.view === name));
+  document.querySelectorAll(".app-view").forEach(view => view.classList.toggle("active", view.id === `${name}-view`));
+  if (name === "memory") {
+    memoryDot.hidden = true;
+    refreshMemory();
+  }
+}
+
+function setMemoryEmpty(message) {
+  const empty = document.createElement("div");
+  empty.className = "empty-memory";
+  const icon = document.createElement("i");
+  icon.setAttribute("data-lucide", "notebook");
+  const text = document.createElement("p");
+  text.textContent = message;
+  empty.append(icon, text);
+  memoryDocument.replaceChildren(empty);
+  refreshIcons();
+}
+
+function renderMarkdown(content) {
+  const fragment = document.createDocumentFragment();
+  for (const rawLine of String(content).split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    let element;
+    if (line.startsWith("### ")) {
+      element = document.createElement("h3");
+      element.textContent = line.slice(4);
+    } else if (line.startsWith("## ")) {
+      element = document.createElement("h2");
+      element.textContent = line.slice(3);
+    } else if (line.startsWith("# ")) {
+      element = document.createElement("h1");
+      element.textContent = line.slice(2);
+    } else if (line.startsWith("> ")) {
+      element = document.createElement("blockquote");
+      element.textContent = line.slice(2);
+    } else {
+      element = document.createElement("p");
+      element.textContent = line;
+    }
+    fragment.append(element);
+  }
+  memoryDocument.replaceChildren(fragment);
+}
+
+async function loadMemoryDay(day) {
+  currentMemoryDay = day;
+  memoryDays.querySelectorAll(".memory-day").forEach(button => button.classList.toggle("active", button.dataset.day === day));
+  memoryState.textContent = "正在读取";
+  try {
+    const result = await window.jarvis.getMemoryDay(day);
+    renderMarkdown(result.content);
+    memoryState.textContent = `${formatDay(day)} · ${result.event_count} 条活动`;
+  } catch (error) {
+    setMemoryEmpty("这一天还没有生成记忆");
+    memoryState.textContent = "暂无文档";
+  }
+}
+
+function renderMemoryDays(days) {
+  memoryDays.replaceChildren();
+  for (const item of days) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "memory-day";
+    button.dataset.day = item.date;
+    const label = document.createElement("strong");
+    const count = document.createElement("span");
+    label.textContent = item.date === today ? "今天" : formatDay(item.date);
+    count.textContent = `${item.event_count}`;
+    button.append(label, count);
+    button.addEventListener("click", () => item.generated ? loadMemoryDay(item.date) : generateMemory(item.date));
+    memoryDays.append(button);
+  }
+  if (!days.length) {
+    const text = document.createElement("span");
+    text.className = "memory-state";
+    text.textContent = "暂无历史记录";
+    memoryDays.append(text);
+  }
+}
+
+async function refreshMemory() {
+  memoryState.textContent = "正在同步";
+  try {
+    const [status, days] = await Promise.all([window.jarvis.getMemoryStatus(), window.jarvis.getMemoryDays()]);
+    today = status.today;
+    $("#memory-today-label").textContent = formatDay(today);
+    $("#memory-today-count").textContent = String(status.today_event_count);
+    renderMemoryDays(days);
+    const selected = days.find(item => item.date === currentMemoryDay && item.generated)
+      || days.find(item => item.date === today && item.generated)
+      || days.find(item => item.generated);
+    if (selected) await loadMemoryDay(selected.date);
+    else {
+      currentMemoryDay = "";
+      setMemoryEmpty(status.today_event_count ? "点击生成今日记忆" : "今天还没有可记录的活动");
+      memoryState.textContent = status.today_event_count ? "已有活动等待生成" : "今日暂无记录";
+    }
+  } catch (error) {
+    setMemoryEmpty("启动 AI 贾维斯后可查看记忆");
+    memoryState.textContent = "后端未连接";
+  }
+}
+
+async function generateMemory(day = today) {
+  if (!day) return;
+  const button = $("#memory-generate");
+  button.disabled = true;
+  memoryState.textContent = "正在调用本地模型归纳全天活动";
+  try {
+    const result = await window.jarvis.generateMemoryDay(day);
+    currentMemoryDay = day;
+    renderMarkdown(result.content);
+    memoryState.textContent = `${formatDay(day)} · 已更新`;
+    await refreshMemory();
+  } catch (error) {
+    memoryState.textContent = error.message || "生成失败";
+  } finally {
+    button.disabled = false;
+  }
 }
 
 startButton.addEventListener("click", async () => {
@@ -83,31 +225,28 @@ startButton.addEventListener("click", async () => {
     render(await window.jarvis.cancelStart());
     return;
   }
-  addLog("已提交一键启动请求");
-  try {
-    render(await window.jarvis.start());
-  } catch (error) {
-    addLog(error.message);
-  }
+  addLog("已提交启动请求");
+  try { render(await window.jarvis.start()); } catch (error) { addLog(error.message); }
 });
 
 pauseButton.addEventListener("click", async () => {
   try {
-    const current = await window.jarvis.getState();
-    render(current.monitoring ? await window.jarvis.pause() : await window.jarvis.resume());
-  } catch (error) {
-    addLog(error.message);
-  }
+    const state = await window.jarvis.getState();
+    render(state.monitoring ? await window.jarvis.pause() : await window.jarvis.resume());
+  } catch (error) { addLog(error.message); }
 });
 
-consoleButton.addEventListener("click", () => window.jarvis.openConsole());
+$("#console-button").addEventListener("click", () => window.jarvis.openConsole());
+document.querySelectorAll(".view-tab").forEach(tab => tab.addEventListener("click", () => switchView(tab.dataset.view)));
+$("#memory-refresh").addEventListener("click", refreshMemory);
+$("#memory-generate").addEventListener("click", () => generateMemory(today));
 
 function renderProfileEditor(settings) {
   gameProfiles = settings.profiles;
   profileSelect.replaceChildren(...gameProfiles.map(profile => {
     const option = document.createElement("option");
     option.value = profile.id;
-    option.textContent = profile.builtIn ? `${profile.name}` : profile.name;
+    option.textContent = profile.name;
     option.selected = profile.id === settings.selectedId;
     return option;
   }));
@@ -116,44 +255,39 @@ function renderProfileEditor(settings) {
   profilePrompt.value = profile.prompt;
   profileDelete.disabled = profile.builtIn;
   profileError.textContent = "";
-  if (window.lucide) window.lucide.createIcons();
+  refreshIcons();
 }
 
-profileButton.addEventListener("click", async () => {
+$("#game-profile-button").addEventListener("click", async () => {
   renderProfileEditor(await window.jarvis.getGameProfiles());
   profileDialog.showModal();
 });
-document.querySelector("#profile-close").addEventListener("click", () => profileDialog.close());
-profileSelect.addEventListener("change", async () => {
-  renderProfileEditor(await window.jarvis.selectGameProfile(profileSelect.value));
-});
-document.querySelector("#profile-add").addEventListener("click", () => {
+$("#profile-close").addEventListener("click", () => profileDialog.close());
+profileSelect.addEventListener("change", async () => renderProfileEditor(await window.jarvis.selectGameProfile(profileSelect.value)));
+$("#profile-add").addEventListener("click", () => {
   const id = `custom-${Date.now()}`;
   gameProfiles.push({ id, name: "新游戏", prompt: "结合当前游戏画面，给出简短、准确、自然的陪伴弹幕。", builtIn: false });
   renderProfileEditor({ selectedId: id, profiles: gameProfiles });
   profileName.select();
 });
-profileDelete.addEventListener("click", async () => {
-  renderProfileEditor(await window.jarvis.deleteGameProfile(profileSelect.value));
-});
+profileDelete.addEventListener("click", async () => renderProfileEditor(await window.jarvis.deleteGameProfile(profileSelect.value)));
 profileForm.addEventListener("submit", async event => {
   event.preventDefault();
   try {
-    renderProfileEditor(await window.jarvis.saveGameProfile({
-      id: profileSelect.value,
-      name: profileName.value,
-      prompt: profilePrompt.value,
-    }));
-    addLog(`已选用《${profileName.value.trim()}》游戏陪伴方案`);
+    renderProfileEditor(await window.jarvis.saveGameProfile({ id: profileSelect.value, name: profileName.value, prompt: profilePrompt.value }));
+    addLog(`已选用《${profileName.value.trim()}》游戏方案`);
     profileDialog.close();
-  } catch (error) {
-    profileError.textContent = error.message;
-  }
+  } catch (error) { profileError.textContent = error.message; }
 });
+
 window.jarvis.onState(render);
 window.jarvis.onProgress(addLog);
+window.jarvis.onMemoryUpdated(() => {
+  if (currentView === "memory") refreshMemory();
+  else memoryDot.hidden = false;
+});
 
 window.addEventListener("DOMContentLoaded", async () => {
-  if (window.lucide) window.lucide.createIcons();
+  refreshIcons();
   render(await window.jarvis.getState());
 });

@@ -4,7 +4,7 @@ Windows 本地优先的 AI 贾维斯应用。核心能力由后端提供，Elect
 
 面向使用者的功能、模型与隐私说明请参阅 [AI 贾维斯项目说明](PROJECT_OVERVIEW.md)。
 
-- **Python/FastAPI 控制面**：状态、场景滞回、弹幕策略、纯文件记忆、课程会话和 UI API。
+- **Python/FastAPI 控制面**：状态、场景滞回、弹幕策略、按日文件记忆、课程会话和 UI API。
 - **C++20 原生 worker**：DXGI 屏幕捕获、WASAPI 系统回放捕获、2 秒媒体窗口、任务调度和 MiniCPM-o 运行时接口。
 - **Electron 桌面端**：一键启动、透明桌宠、聊天气泡、游戏弹幕、托盘和课程关键帧回传。
 
@@ -17,7 +17,8 @@ Windows 本地优先的 AI 贾维斯应用。核心能力由后端提供，Elect
 - Windows Named Pipe 客户端/服务端。
 - DXGI Desktop Duplication 与 WASAPI loopback 基础采集。
 - 16 kHz 单声道重采样、精确 2 秒音频窗口、画面指纹和 latest-only 调度。
-- 纯文件 JSONL 记忆、BM25 风格检索、摘要/事实文件和保留/清理。
+- 后台活动记忆、按日 Markdown、本地模型时间轴总结、历史浏览、BM25 风格检索和保留/清理。
+- 感知前置画面变化检测；静止、静音 10 分钟后提醒，提醒间隔不少于 15 分钟。
 - 课程会话、转写、关键帧、可恢复 Markdown 输出及 Windows Known Folder Desktop 定位。
 - 普通场景按需气泡提醒、网课场景低频陪伴气泡、游戏场景桌宠隐藏与点击穿透弹幕层。
 - 网课自动开始/结束记录，并导出 `README.md` 和 `images/` 到桌面的独立课程文件夹。
@@ -85,7 +86,7 @@ npm run build
 
 安装包不携带模型权重。首次真实启动仍由后端启动器按既有校验流程准备模型与原生运行时。
 
-主要 API 前缀为 `/api/v1`，包括健康、命令、场景、弹幕、记忆和课程接口。事件 WebSocket 为 `/ws/events`。
+主要 API 前缀为 `/api/v1`，包括健康、命令、场景、弹幕、记忆和课程接口。每日记忆通过 `/memory/days` 查询，并通过 `/memory/days/{date}/generate` 调用本地模型归并时间段、生成或刷新。事件 WebSocket 为 `/ws/events`。
 
 设置 `server.bearer_token` 后，HTTP 使用 `Authorization: Bearer <token>`；WebSocket 可使用同一请求头或 `?token=<token>`。
 
@@ -127,7 +128,7 @@ MVP 是文本输出，不需要 TTS、projector、Token2Wav 或参考音色文�
 ## 数据与隐私
 
 - 普通运行不应持久化原始屏幕和音频。
-- 记忆默认写到 `memory/`，课程工作文件写到 `courses/sessions/`，二者均被 `.gitignore` 排除。
+- 记忆事件默认写到 `memory/events.jsonl`，每日文档写到 `memory/daily/YYYY-MM-DD.md`；课程工作文件写到 `courses/sessions/`，这些目录均被 `.gitignore` 排除。
 - 课程关键帧只有被课程流程选中时才写盘。
 - 网课显示状态需连续 3 次判为非课程才会退出；课程记录会话需持续离课至少 90 秒且达到 4 次感知样本才会结束，APP 重启会继续未完成会话，因此短暂误判不会拆分课程。
 - 实时阶段只记录授课语音转写和视觉模型选出的关键画面；课程结束后，后端基于整节课转写统一生成一次最终课程总结。内部转写及截图来源元数据不会写入成品 Markdown。

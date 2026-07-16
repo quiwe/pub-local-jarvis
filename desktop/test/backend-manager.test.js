@@ -20,3 +20,24 @@ test("cancelling without a live child is idempotent", async () => {
   await assert.doesNotReject(manager.cancelStart());
   await assert.doesNotReject(manager.cancelStart());
 });
+
+test("memory helpers use the daily memory API", async () => {
+  const manager = new BackendManager({ backendRoot: process.cwd() });
+  const requests = [];
+  manager.request = async (pathname, options = {}) => {
+    requests.push([pathname, options.method || "GET"]);
+    return {};
+  };
+
+  await manager.memoryStatus();
+  await manager.memoryDays();
+  await manager.memoryDay("2026-07-16");
+  await manager.generateMemoryDay("2026-07-16");
+
+  assert.deepEqual(requests, [
+    ["/api/v1/memory/status", "GET"],
+    ["/api/v1/memory/days", "GET"],
+    ["/api/v1/memory/days/2026-07-16", "GET"],
+    ["/api/v1/memory/days/2026-07-16/generate", "POST"],
+  ]);
+});
