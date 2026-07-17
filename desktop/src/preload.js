@@ -29,7 +29,6 @@ contextBridge.exposeInMainWorld("jarvis", {
   getImageGenerationSettings: () => ipcRenderer.invoke("jarvis:image-settings-get"),
   saveImageGenerationSettings: value => ipcRenderer.invoke("jarvis:image-settings-save", value),
   toggleScreenPrivacy: () => ipcRenderer.invoke("jarvis:toggle-screen-privacy"),
-  reportPetPointer: interactive => ipcRenderer.send("jarvis:pet-pointer", !!interactive),
   onState: subscribe("jarvis:state"),
   onProgress: subscribe("jarvis:progress"),
   onMemoryUpdated: subscribe("jarvis:memory-updated"),

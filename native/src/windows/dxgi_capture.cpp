@@ -21,8 +21,9 @@ std::string hresult_message(const char* what, HRESULT hr) {
   message << what << " (HRESULT=0x" << std::hex << static_cast<unsigned long>(hr) << ')';
   return message.str();
 }
-HMONITOR foreground_monitor() noexcept {
-  return MonitorFromWindow(GetForegroundWindow(), MONITOR_DEFAULTTOPRIMARY);
+HMONITOR pet_monitor() noexcept {
+  const auto pet_window = FindWindowW(nullptr, L"AI Jarvis Pet");
+  return MonitorFromWindow(pet_window, MONITOR_DEFAULTTOPRIMARY);
 }
 class DxgiDesktopCapture final : public IDesktopCapture {
  public:
@@ -31,7 +32,7 @@ class DxgiDesktopCapture final : public IDesktopCapture {
     ComPtr<IDXGIFactory1> factory;
     check(CreateDXGIFactory1(IID_PPV_ARGS(&factory)), "CreateDXGIFactory1 failed");
     HRESULT last_error = DXGI_ERROR_NOT_FOUND;
-    const auto target_monitor = foreground_monitor();
+    const auto target_monitor = pet_monitor();
     for (int pass = 0; pass < 2; ++pass) {
       for (UINT adapter_index = 0;; ++adapter_index) {
         ComPtr<IDXGIAdapter1> adapter;
@@ -65,7 +66,7 @@ class DxgiDesktopCapture final : public IDesktopCapture {
           context_ = std::move(candidate_context);
           duplication_ = std::move(candidate_duplication);
           monitor_ = output_desc.Monitor;
-          std::cerr << "Capturing foreground monitor: "
+          std::cerr << "Capturing desktop-pet monitor: "
                     << output_desc.DesktopCoordinates.right -
                            output_desc.DesktopCoordinates.left
                     << 'x'
@@ -90,7 +91,7 @@ class DxgiDesktopCapture final : public IDesktopCapture {
     staging_.Reset(); duplication_.Reset(); context_.Reset(); device_.Reset();
   }
   std::optional<VideoFrame> next_frame(std::uint32_t timeout_ms) override {
-    if (monitor_ && foreground_monitor() != monitor_) {
+    if (monitor_ && pet_monitor() != monitor_) {
       stop();
       start();
       return std::nullopt;
@@ -129,7 +130,7 @@ class DxgiDesktopCapture final : public IDesktopCapture {
   }
  private:
   void start_gdi() {
-    monitor_ = foreground_monitor();
+    monitor_ = pet_monitor();
     MONITORINFO monitor_info{.cbSize = sizeof(MONITORINFO)};
     if (!monitor_ || !GetMonitorInfoW(monitor_, &monitor_info)) {
       throw std::runtime_error("foreground monitor is unavailable");

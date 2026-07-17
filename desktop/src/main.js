@@ -16,6 +16,7 @@ const {
 const { BackendManager, StartCancelledError } = require("./backend-manager");
 const { presentBarrageWindow } = require("./barrage-overlay");
 const { routeBackendEvent } = require("./event-router");
+const { displayForWindow, sourceForDisplay } = require("./pet-display");
 const { isPetPointerInteractive } = require("./pet-hit-test");
 const { randomPrivacyDelay, randomPrivacyMessage } = require("./privacy-mode");
 const { resolveDisplayScene } = require("./scene-policy");
@@ -150,6 +151,7 @@ function createPetWindow() {
     focusable: true,
     hasShadow: false,
     show: false,
+    title: "AI Jarvis Pet",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -304,7 +306,7 @@ async function captureKeyframe(effect) {
   pendingCaptures.add(effect.id);
   restoreCoursePet();
   try {
-    const display = screen.getPrimaryDisplay();
+    const display = displayForWindow(screen, petWindow);
     const ratio = Math.min(1, 1280 / display.bounds.width);
     const sources = await desktopCapturer.getSources({
       types: ["screen"],
@@ -313,7 +315,7 @@ async function captureKeyframe(effect) {
         height: Math.max(1, Math.round(display.bounds.height * ratio)),
       },
     });
-    const source = sources.find(item => item.display_id === String(display.id)) || sources[0];
+    const source = sourceForDisplay(sources, display);
     if (!source || source.thumbnail.isEmpty()) throw new Error("无法读取屏幕缩略图");
     await manager.addKeyframe(effect.id, {
       image_base64: source.thumbnail.toPNG().toString("base64"),
@@ -539,10 +541,6 @@ function registerIpc() {
   });
   ipcMain.handle("jarvis:open-output", async (_event, outputPath) => {
     if (typeof outputPath === "string" && outputPath) shell.showItemInFolder(outputPath);
-  });
-  ipcMain.on("jarvis:pet-pointer", (event, interactive) => {
-    if (!petWindow || event.sender !== petWindow.webContents) return;
-    petWindow.setIgnoreMouseEvents(!interactive, interactive ? undefined : { forward: true });
   });
 }
 

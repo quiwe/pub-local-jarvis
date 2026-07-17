@@ -6,7 +6,6 @@ const bubbleText = document.querySelector("#bubble-text");
 const bubbleAction = document.querySelector("#bubble-action");
 const privacyToggle = document.querySelector("#privacy-toggle");
 let outputPath = null;
-let pointerInteractive = false;
 
 privacyToggle.addEventListener("dblclick", async event => {
   event.preventDefault();
@@ -41,24 +40,4 @@ window.jarvis.onBubble(message => {
 
 bubbleAction.addEventListener("click", () => {
   if (outputPath) window.jarvis.openOutput(outputPath);
-});
-
-document.addEventListener("mousemove", event => {
-  const interactive = Boolean(event.target.closest(".interactive"));
-  if (interactive !== pointerInteractive) {
-    pointerInteractive = interactive;
-    window.jarvis.reportPetPointer(interactive);
-  }
-});
-
-for (const element of [pet, bubble]) {
-  element.addEventListener("mouseenter", () => {
-    pointerInteractive = true;
-    window.jarvis.reportPetPointer(true);
-  });
-}
-
-document.addEventListener("mouseleave", () => {
-  pointerInteractive = false;
-  window.jarvis.reportPetPointer(false);
 });
