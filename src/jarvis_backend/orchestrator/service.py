@@ -1049,11 +1049,17 @@ class OrchestrationService:
                 active_instruction = True
                 instructional_audio = bool(course_transcript)
                 course_surface = bool(course_note)
+            # Instructional speech establishes active teaching even when the lecturer
+            # is not visible. Browser content needs corroboration from both modalities.
+            active_instruction = active_instruction or instructional_audio
+            browsing_without_course_corroboration = scene_evidence[
+                "ordinary_browsing"
+            ] and not (course_surface and instructional_audio)
             if (
                 confidence < 0.78
                 or not active_instruction
                 or not (course_surface or instructional_audio)
-                or scene_evidence["ordinary_browsing"]
+                or browsing_without_course_corroboration
             ):
                 scene = "other"
         if scene == "game" and not barrage:

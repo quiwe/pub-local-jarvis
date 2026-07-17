@@ -30,15 +30,14 @@ def test_game_profile_command_reaches_native_client() -> None:
         assert response.json()["result"]["method"] == "set_game_profile"
 
 
-def test_console_is_served_at_root() -> None:
+def test_backend_exposes_no_browser_ui() -> None:
     app = create_app(Settings(), InProcessNativeClient())
     with TestClient(app) as client:
-        response = client.get("/")
+        root = client.get("/")
+        docs = client.get("/docs")
 
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/html")
-    assert 'id="jarvis-console"' in response.text
-    assert "/ws/events" in response.text
+    assert root.status_code == 404
+    assert docs.status_code == 404
 
 
 def test_scene_endpoint_reports_only_stable_change() -> None:

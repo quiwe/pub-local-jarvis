@@ -13,7 +13,6 @@ contextBridge.exposeInMainWorld("jarvis", {
   cancelStart: () => ipcRenderer.invoke("jarvis:cancel-start"),
   pause: () => ipcRenderer.invoke("jarvis:pause"),
   resume: () => ipcRenderer.invoke("jarvis:resume"),
-  openConsole: () => ipcRenderer.invoke("jarvis:open-console"),
   openOutput: outputPath => ipcRenderer.invoke("jarvis:open-output", outputPath),
   getState: () => ipcRenderer.invoke("jarvis:get-state"),
   getGameProfiles: () => ipcRenderer.invoke("jarvis:get-game-profiles"),

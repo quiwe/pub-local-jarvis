@@ -18,6 +18,27 @@ function throwIfCancelled(signal) {
   if (signal?.aborted) throw new StartCancelledError();
 }
 
+function backendLaunchSpec(backendRoot, useFake) {
+  if (useFake) {
+    return {
+      executable: path.join(backendRoot, ".venv", "Scripts", "jarvis-backend.exe"),
+      args: [],
+    };
+  }
+  return {
+    executable: "powershell.exe",
+    args: [
+      "-NoLogo",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      path.join(backendRoot, "start-real.ps1"),
+      "-SkipSmokeTest",
+    ],
+  };
+}
+
 class BackendManager extends EventEmitter {
   constructor(options = {}) {
     super();
@@ -93,8 +114,16 @@ class BackendManager extends EventEmitter {
   }
 
   async cancelStart() {
+    await this.terminateChildTree();
+    this.ownsBackend = false;
+  }
+
+  async terminateChildTree() {
     const child = this.child;
-    if (!child || child.exitCode !== null) return;
+    if (!child || child.exitCode !== null) {
+      this.child = null;
+      return;
+    }
     if (process.platform === "win32" && child.pid) {
       await new Promise(resolve => {
         const killer = spawn("taskkill.exe", ["/pid", String(child.pid), "/T", "/F"], {
@@ -112,29 +141,11 @@ class BackendManager extends EventEmitter {
       await new Promise(resolve => child.once("close", resolve));
     }
     this.child = null;
-    this.ownsBackend = false;
   }
 
   spawnBackend() {
     if (this.child && this.child.exitCode === null) return;
-    let executable;
-    let args;
-    if (this.useFake) {
-      executable = path.join(this.backendRoot, ".venv", "Scripts", "jarvis-backend.exe");
-      args = [];
-    } else {
-      executable = "powershell.exe";
-      args = [
-        "-NoLogo",
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        path.join(this.backendRoot, "start-real.ps1"),
-        "-NoBrowser",
-        "-SkipSmokeTest",
-      ];
-    }
+    const { executable, args } = backendLaunchSpec(this.backendRoot, this.useFake);
     this.child = spawn(executable, args, {
       cwd: this.backendRoot,
       windowsHide: true,
@@ -230,9 +241,10 @@ class BackendManager extends EventEmitter {
         await this.command("shutdown");
       } catch (_) {}
       await delay(800);
-      if (this.child && this.child.exitCode === null) this.child.kill();
+      await this.terminateChildTree();
     }
+    this.ownsBackend = false;
   }
 }
 
-module.exports = { BackendManager, StartCancelledError };
+module.exports = { BackendManager, StartCancelledError, backendLaunchSpec };

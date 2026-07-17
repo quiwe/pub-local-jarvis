@@ -56,6 +56,10 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
     {
       std::lock_guard lock(mutex_);
       contexts_[request.id] = bool(request.frame) && bool(request.audio_16khz_mono);
+      audible_contexts_[request.id] =
+          request.audio_16khz_mono &&
+          std::ranges::any_of(*request.audio_16khz_mono,
+                              [](float sample) { return sample != 0.0F; });
       prompts_[request.id] = request.prompt;
     }
     changed_.notify_all();
@@ -111,6 +115,12 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
   bool had_context(std::uint64_t id) {
     std::lock_guard lock(mutex_); return contexts_.contains(id) && contexts_[id];
   }
+  bool received_audible_perception() {
+    std::lock_guard lock(mutex_);
+    return std::ranges::any_of(audible_contexts_, [](const auto& item) {
+      return item.first >= (std::uint64_t{1} << 63U) && item.second;
+    });
+  }
   bool received_perception() {
     std::lock_guard lock(mutex_);
     bool clean_classification = false;
@@ -122,7 +132,10 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
           prompt.find("scene_evidence") != std::string::npos &&
           prompt.find("course_interaction") != std::string::npos &&
           prompt.find("游戏视频、直播、回放") != std::string::npos &&
-          prompt.find("搜索结果、普通网页") != std::string::npos &&
+          prompt.find("搜索结果、与音频无关的普通网页") != std::string::npos &&
+          prompt.find("老师或讲师不需要出现在画面中") != std::string::npos &&
+          prompt.find("静态 PPT 或笔记") != std::string::npos &&
+          prompt.find("结合两种模态交叉验证") != std::string::npos &&
           prompt.find("普通主动文本完全由独立的原生全双工会话决定") !=
               std::string::npos &&
           prompt.find("assistant_candidates") == std::string::npos &&
@@ -164,6 +177,7 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
  private:
   bool ready_{};
   std::unordered_map<std::uint64_t, bool> contexts_;
+  std::unordered_map<std::uint64_t, bool> audible_contexts_;
   std::unordered_map<std::uint64_t, std::string> prompts_;
   std::deque<jarvis::DuplexResult> duplex_results_;
   std::string duplex_instruction_;
@@ -184,7 +198,7 @@ class TestAudioCapture final : public jarvis::IAudioCapture {
   void start() override {}
   void stop() noexcept override {}
   std::optional<jarvis::audio::PcmBlock> next_block(std::uint32_t) override {
-    return jarvis::audio::PcmBlock{{16'000, 1}, std::vector<float>(320), 0};
+    return jarvis::audio::PcmBlock{{16'000, 1}, std::vector<float>(320, 0.01F), 0};
   }
 };
 #endif
@@ -285,6 +299,8 @@ int main() {
           "monitoring starts with capture devices");
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
   require(recording_ptr->received_perception(), "monitoring schedules structured perception");
+  require(recording_ptr->received_audible_perception(),
+          "structured perception receives audible system audio");
   require(recording_ptr->perception_request_count() == 2,
           "unchanged frames do not schedule repeated perception");
   require(recording_ptr->game_generation_is_text_only(),

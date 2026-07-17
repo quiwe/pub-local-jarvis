@@ -267,7 +267,7 @@ button, select { cursor: pointer; }
   position: relative;
   z-index: 3;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 9px;
   padding: 11px 20px 13px;

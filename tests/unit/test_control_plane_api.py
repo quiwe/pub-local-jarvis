@@ -992,9 +992,38 @@ def test_perception_keeps_internal_observation_separate_from_bubble_text():
             },
             "course",
         ),
+        (
+            {
+                "scene": "course",
+                "confidence": 0.95,
+                "scene_evidence": {
+                    "active_instruction": False,
+                    "course_surface": True,
+                    "instructional_audio": True,
+                    "ordinary_browsing": True,
+                },
+                "course_transcript": "梯度表示函数在该点增长最快的方向。",
+                "course_note": "浏览器中的课件正在展示梯度公式。",
+            },
+            "course",
+        ),
+        (
+            {
+                "scene": "course",
+                "confidence": 0.95,
+                "scene_evidence": {
+                    "active_instruction": False,
+                    "course_surface": True,
+                    "instructional_audio": False,
+                    "ordinary_browsing": False,
+                },
+                "course_note": "画面只有一页静态课堂笔记。",
+            },
+            "other",
+        ),
     ],
 )
-def test_scene_evidence_rejects_passive_game_media_and_ordinary_browsing(
+def test_scene_evidence_validates_gameplay_and_multimodal_courses(
     payload, expected_scene
 ):
     result = create_app().state.orchestrator._parse_perception(

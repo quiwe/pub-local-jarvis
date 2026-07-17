@@ -2,7 +2,27 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { BackendManager, StartCancelledError } = require("../src/backend-manager");
+const {
+  BackendManager,
+  StartCancelledError,
+  backendLaunchSpec,
+} = require("../src/backend-manager");
+
+test("the real backend launcher has no browser mode", () => {
+  const root = "C:\\AIJarvis";
+  const spec = backendLaunchSpec(root, false);
+
+  assert.equal(spec.executable, "powershell.exe");
+  assert.deepEqual(spec.args, [
+    "-NoLogo",
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    `${root}\\start-real.ps1`,
+    "-SkipSmokeTest",
+  ]);
+});
 
 test("an aborted start never spawns the backend", async () => {
   const manager = new BackendManager({ backendRoot: process.cwd() });
@@ -19,6 +39,19 @@ test("cancelling without a live child is idempotent", async () => {
   const manager = new BackendManager({ backendRoot: process.cwd() });
   await assert.doesNotReject(manager.cancelStart());
   await assert.doesNotReject(manager.cancelStart());
+});
+
+test("stopping an owned backend terminates its complete process tree", async () => {
+  const manager = new BackendManager({ backendRoot: process.cwd() });
+  let terminated = false;
+  manager.ownsBackend = true;
+  manager.command = async () => ({});
+  manager.terminateChildTree = async () => { terminated = true; };
+
+  await manager.stop();
+
+  assert.equal(terminated, true);
+  assert.equal(manager.ownsBackend, false);
 });
 
 test("memory helpers use the daily memory API", async () => {

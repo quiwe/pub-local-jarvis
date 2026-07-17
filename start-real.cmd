@@ -1,10 +1,14 @@
 @echo off
 setlocal
-cd /d "%~dp0"
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-real.ps1" %*
-set "JARVIS_EXIT_CODE=%ERRORLEVEL%"
-if not "%JARVIS_EXIT_CODE%"=="0" (
-    echo.
+set "JARVIS_DESKTOP=%~dp0desktop"
+set "JARVIS_ELECTRON=%JARVIS_DESKTOP%\node_modules\electron\dist\electron.exe"
+
+if not exist "%JARVIS_ELECTRON%" (
+    echo AI Jarvis desktop dependencies are missing.
+    echo Run "npm install" in "%JARVIS_DESKTOP%" and try again.
     pause
+    exit /b 1
 )
-exit /b %JARVIS_EXIT_CODE%
+
+start "AI Jarvis" /D "%JARVIS_DESKTOP%" "%JARVIS_ELECTRON%" "%JARVIS_DESKTOP%"
+exit /b 0

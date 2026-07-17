@@ -30,6 +30,8 @@ const {
 
 app.setName("AI Jarvis");
 app.commandLine.appendSwitch("disable-background-timer-throttling");
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) app.exit(0);
 
 let launcherWindow = null;
 let petWindow = null;
@@ -129,7 +131,7 @@ function createLauncherWindow() {
   launcherWindow.on("close", event => {
     if (!quitting) {
       event.preventDefault();
-      launcherWindow.hide();
+      app.quit();
     }
   });
 }
@@ -237,7 +239,6 @@ function updateTrayMenu() {
       enabled: state.phase === "running" || state.phase === "paused",
       click: () => (state.monitoring ? pauseMonitoring() : resumeMonitoring()),
     },
-    { label: "打开后端控制台", enabled: state.phase !== "idle", click: openConsole },
     { type: "separator" },
     { label: "退出 AI Jarvis", click: () => app.quit() },
   ]));
@@ -467,10 +468,6 @@ async function resumeMonitoring() {
   return { ...state };
 }
 
-function openConsole() {
-  return shell.openExternal("http://127.0.0.1:8000/");
-}
-
 function runDemo() {
   setTimeout(() => handleBackendEvent({ topic: "assistant.message", payload: { text: "下载任务已经完成，文件可以直接使用。" } }), 1200);
   setTimeout(() => handleBackendEvent({ topic: "perception.completed", payload: { scene: "game" } }), 5500);
@@ -484,7 +481,6 @@ function registerIpc() {
   ipcMain.handle("jarvis:cancel-start", cancelStart);
   ipcMain.handle("jarvis:pause", pauseMonitoring);
   ipcMain.handle("jarvis:resume", resumeMonitoring);
-  ipcMain.handle("jarvis:open-console", openConsole);
   ipcMain.handle("jarvis:get-state", () => ({ ...state }));
   ipcMain.handle("jarvis:memory-status", () => manager.memoryStatus());
   ipcMain.handle("jarvis:memory-days", () => manager.memoryDays());
@@ -563,6 +559,11 @@ app.whenReady().then(() => {
 });
 
 app.on("activate", () => launcherWindow && launcherWindow.show());
+app.on("second-instance", () => {
+  if (!launcherWindow || launcherWindow.isDestroyed()) return;
+  launcherWindow.show();
+  launcherWindow.focus();
+});
 app.on("window-all-closed", () => {});
 app.on("before-quit", event => {
   if (quitting) return;

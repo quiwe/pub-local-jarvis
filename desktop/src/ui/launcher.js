@@ -360,7 +360,6 @@ pauseButton.addEventListener("click", async () => {
   } catch (error) { addLog(error.message); }
 });
 
-$("#console-button").addEventListener("click", () => window.jarvis.openConsole());
 document.querySelectorAll(".view-tab").forEach(tab => tab.addEventListener("click", () => switchView(tab.dataset.view)));
 $("#memory-refresh").addEventListener("click", refreshMemory);
 $("#memory-generate").addEventListener("click", () => generateMemory(today));
