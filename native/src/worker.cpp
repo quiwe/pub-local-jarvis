@@ -375,6 +375,7 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
     auto last_perception = deadline - kPerceptionHeartbeat;
     auto last_visual_change = deadline;
     auto next_idle_reminder = deadline + kIdleReminderAfter;
+    bool perception_pending = true;
     std::uint32_t idle_reminder_sequence{};
     FrameChangeDetector screen_changes;
     bool first_frame_logged = false;
@@ -496,7 +497,9 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
               now - last_visual_change < kIdleReminderAfter;
           const bool should_analyze =
               visually_changed || active_course_audio || heartbeat_due;
-          if (should_analyze && now >= next_perception && scheduler_ && !scheduler_->busy()) {
+          perception_pending = perception_pending || should_analyze;
+          if (perception_pending && now >= next_perception && scheduler_ &&
+              !scheduler_->busy()) {
             std::string prompt(kSceneClassificationPrompt);
             {
               std::lock_guard lock(mutex_);
@@ -544,6 +547,7 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
                                      .audio_16khz_mono=
                                          std::move(perception_audio_window)},
                     Priority::normal});
+            perception_pending = false;
             last_perception = now;
             next_perception = now + kPerceptionInterval;
           }

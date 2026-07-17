@@ -1043,15 +1043,71 @@ def test_duplex_messages_reject_narration_offers_and_uncertainty(tmp_path):
         assert orchestrator._clean_duplex_message("看起来构建可能失败了。") == ""
         assert orchestrator._clean_duplex_message("已经进入“概览”页，开始查看") == ""
         assert orchestrator._clean_duplex_message("应用信息了。") == ""
+        assert orchestrator._clean_duplex_message(
+            "光标在代码里移动，准备继续往下看。", require_proactive_value=False
+        ) == ""
+        assert orchestrator._clean_duplex_message(
+            "光标在打开多个程序的快捷方式。", require_proactive_value=False
+        ) == ""
+        assert orchestrator._clean_duplex_message(
+            "视频开始了，讲解的是高等数学2.0版。", require_proactive_value=False
+        ) == ""
+        assert orchestrator._clean_duplex_message(
+            "同一个报错看第三遍也不会自己消失，先看第一条堆栈。",
+            require_proactive_value=False,
+        ) == "同一个报错看第三遍也不会自己消失，先看第一条堆栈。"
         assert orchestrator._clean_duplex_message("下载完成了，文件可以直接用了。") == (
             "下载完成了，文件可以直接用了。"
         )
+        assert orchestrator._clean_duplex_message(
+            "文档中有端口和连接信息，建议仔细核对。"
+        ) == "文档中有端口和连接信息，建议仔细核对。"
         assert orchestrator._clean_duplex_message(
             "构建失败：链接器找不到入口符号。后续所有改动等完整验证后再决定。"
         ) == "构建失败：链接器找不到入口符号。"
 
 
-def test_ambient_duplex_requires_concrete_proactive_value(tmp_path):
+def test_ambient_duplex_assembles_adjacent_fragments_before_filtering(tmp_path):
+    with make_client(tmp_path) as client:
+        orchestrator = client.app.state.orchestrator
+        assert orchestrator._assemble_duplex_message(
+            "下载已经完成，文件可以直接", "jarvis-ambient", 10.0
+        ) == ""
+        assert orchestrator._assemble_duplex_message(
+            "使用了。", "jarvis-ambient", 11.0
+        ) == "下载已经完成，文件可以直接使用了。"
+        assert orchestrator._assemble_duplex_message(
+            'frame":"显示桌面与代码窗口', "jarvis-ambient", 12.0
+        ) == ""
+        assert orchestrator._assemble_duplex_message(
+            '相关选项。","course_transcript":""', "jarvis-ambient", 13.0
+        ) == ""
+
+
+def test_truncated_perception_recovers_complete_scene_evidence(tmp_path):
+    with make_client(tmp_path) as client:
+        result = client.app.state.orchestrator._parse_perception(
+            '{"scene":"game","confidence":0.93,"scene_evidence":'
+            '{"interactive_gameplay":true,"game_video_or_stream":false,'
+            '"active_instruction":false,"course_surface":false,'
+            '"instructional_audio":false,"ordinary_browsing":false},'
+            '"observation":"玩家正在操控角色移动","course_transcript":"'
+        )
+        assert result["scene"] == "game"
+        assert result["confidence"] == 0.93
+        assert result["observation"] == "玩家正在操控角色移动"
+
+
+def test_truncated_perception_rejects_incomplete_game_evidence(tmp_path):
+    with make_client(tmp_path) as client:
+        with pytest.raises(json.JSONDecodeError, match="incomplete scene evidence"):
+            client.app.state.orchestrator._parse_perception(
+                '{"scene":"game","confidence":0.93,"scene_evidence":'
+                '{"interactive_gameplay":true'
+            )
+
+
+def test_ambient_duplex_rejects_routine_fragments_and_accepts_grounded_comment(tmp_path):
     with make_client(tmp_path) as client:
         native = client.app.state.orchestrator.native_client
 
@@ -1059,6 +1115,7 @@ def test_ambient_duplex_requires_concrete_proactive_value(tmp_path):
             [
                 "已经进入“概览”页，开始查看",
                 "应用信息了。",
+                "这里的端口配置值得先核对连接目标。",
                 "构建失败：链接器找不到入口符号。",
             ],
             start=1,
@@ -1081,6 +1138,11 @@ def test_ambient_duplex_requires_concrete_proactive_value(tmp_path):
             if event["topic"] == "assistant.message"
         ]
         assert messages == [
+            {
+                "text": "这里的端口配置值得先核对连接目标。",
+                "source": "duplex",
+                "session_id": "jarvis-ambient",
+            },
             {
                 "text": "构建失败：链接器找不到入口符号。",
                 "source": "duplex",
