@@ -1082,6 +1082,24 @@ def test_ambient_duplex_assembles_adjacent_fragments_before_filtering(tmp_path):
         assert orchestrator._assemble_duplex_message(
             '相关选项。","course_transcript":""', "jarvis-ambient", 13.0
         ) == ""
+        assert orchestrator._assemble_duplex_message(
+            'course":false,"instructional_audio":false', "jarvis-ambient", 14.0
+        ) == ""
+        assert orchestrator._assemble_duplex_message(
+            "和片段，涉及项目提交", "jarvis-ambient", 15.0
+        ) == ""
+        assert orchestrator._assemble_duplex_message(
+            "文档吧。", "jarvis-ambient", 16.0
+        ) == ""
+        assert orchestrator._assemble_duplex_message(
+            "）、夹和游戏截图，整体为典型桌面", "jarvis-ambient", 20.0
+        ) == ""
+        assert orchestrator._assemble_duplex_message(
+            "一样，找文件得先理清思路。", "jarvis-ambient", 21.0
+        ) == ""
+        assert orchestrator._assemble_duplex_message(
+            "先把同类文件归到一起，找东西会省不少时间。", "jarvis-ambient", 25.0
+        ) == "先把同类文件归到一起，找东西会省不少时间。"
 
 
 def test_truncated_perception_recovers_complete_scene_evidence(tmp_path):

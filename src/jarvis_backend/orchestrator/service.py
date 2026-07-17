@@ -143,6 +143,7 @@ class OrchestrationService:
         self._recent_barrages: deque[tuple[str, float]] = deque(maxlen=12)
         self._recent_duplex_messages: deque[tuple[str, float]] = deque(maxlen=4)
         self._pending_duplex_fragment: tuple[str | None, str, float] | None = None
+        self._discarding_duplex_fragment: tuple[str | None, float] | None = None
         self._duplex_session_id: str | None = None
         self._duplex_instruction = ""
         self._last_course_interaction = ""
@@ -205,6 +206,7 @@ class OrchestrationService:
             self._duplex_instruction = ""
             self._recent_duplex_messages.clear()
             self._pending_duplex_fragment = None
+            self._discarding_duplex_fragment = None
             if previous_id is not None:
                 await self.events.publish(
                     Event("duplex.task.stopped", {"session_id": previous_id})
@@ -768,6 +770,7 @@ class OrchestrationService:
         self._duplex_instruction = cleaned
         self._recent_duplex_messages.clear()
         self._pending_duplex_fragment = None
+        self._discarding_duplex_fragment = None
         await self.events.publish(
             Event(
                 "duplex.task.started",
@@ -783,6 +786,7 @@ class OrchestrationService:
         self._duplex_instruction = ""
         self._recent_duplex_messages.clear()
         self._pending_duplex_fragment = None
+        self._discarding_duplex_fragment = None
         if previous_id is not None:
             await self.events.publish(
                 Event("duplex.task.stopped", {"session_id": previous_id})
@@ -946,6 +950,9 @@ class OrchestrationService:
         if topic == "duplex.decision":
             await self.events.publish(Event(topic, payload))
             if payload.get("decision") != "speak" or payload.get("ok") is not True:
+                if payload.get("decision") == "listen":
+                    self._pending_duplex_fragment = None
+                    self._discarding_duplex_fragment = None
                 return
             session_id = payload.get("session_id")
             now = time.monotonic()
@@ -1452,6 +1459,17 @@ class OrchestrationService:
         if resolved_session != AMBIENT_DUPLEX_SESSION_ID:
             return cleaned
 
+        discarding = self._discarding_duplex_fragment
+        if discarding is not None:
+            discarded_session, discarded_at = discarding
+            if discarded_session == resolved_session and now - discarded_at <= 3.0:
+                if cleaned and not re.search(r"[。！!?？]$", cleaned):
+                    self._discarding_duplex_fragment = (resolved_session, now)
+                else:
+                    self._discarding_duplex_fragment = None
+                return ""
+            self._discarding_duplex_fragment = None
+
         pending = self._pending_duplex_fragment
         self._pending_duplex_fragment = None
         if pending is not None:
@@ -1461,11 +1479,24 @@ class OrchestrationService:
 
         if not cleaned:
             return ""
-        if re.search(r'[{}]|"[A-Za-z_][A-Za-z0-9_]*"\s*:', cleaned):
+        contaminated = re.search(
+            r'[{}]|(?:^|[,\s])[A-Za-z_][A-Za-z0-9_]*"\s*:'
+            r'|"[A-Za-z_][A-Za-z0-9_]*"\s*:',
+            cleaned,
+        )
+        broken_start = re.search(
+            r"^[、，。；：）】\]}>]|^(?:和|与|及|以及|而且|但是|不过|的)(?!确)",
+            cleaned,
+        )
+        if contaminated or (pending is None and broken_start):
+            if not re.search(r"[。！!?？]$", cleaned):
+                self._discarding_duplex_fragment = (resolved_session, now)
             return ""
         if not re.search(r"[。！!?？]$", cleaned):
             if len(cleaned) <= 80:
                 self._pending_duplex_fragment = (resolved_session, cleaned, now)
+            else:
+                self._discarding_duplex_fragment = (resolved_session, now)
             return ""
         return cleaned
 
@@ -1483,6 +1514,7 @@ class OrchestrationService:
             cleaned,
         )
         routine_narration = re.search(
+            r"^[、，。；：）】\]}>]|^(?:和|与|及|以及|而且|但是|不过|的)(?!确)|"
             r"^(?:当前|现在)?(?:正在|已打开|打开了|切换到|进入了|已经进入|开始查看)|"
             r"^(?:当前|现在)?显示|^操作无(?:明显)?|"
             r"^(?:画面|页面|视频|屏幕)(?:中|里|上)?(?:显示|出现|开始|正在|讲解|播放|内容|是)|"
