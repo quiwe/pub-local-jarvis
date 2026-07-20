@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import ctypes
 import json
+import logging
 import os
 import threading
 from abc import ABC, abstractmethod
@@ -20,6 +21,8 @@ from .protocol import (
     encode_frame,
     json_payload,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class NativeClient(ABC):
@@ -327,7 +330,20 @@ class NamedPipeNativeClient(NativeClient):
         if not frame.payload:
             return {"ok": True}
         if frame.message_type == MessageType.RESULT:
-            return {"ok": True, "text": frame.payload.decode("utf-8")}
+            try:
+                text = frame.payload.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                logger.warning(
+                    "native result %s contained invalid UTF-8 at byte %s; "
+                    "replacing malformed bytes",
+                    frame.request_id,
+                    exc.start,
+                )
+                text = frame.payload.decode("utf-8", errors="replace")
+            return {
+                "ok": True,
+                "text": text,
+            }
         try:
             value = json.loads(frame.payload.decode("utf-8"))
             return value if isinstance(value, dict) else {"value": value}

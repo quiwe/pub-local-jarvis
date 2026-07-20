@@ -77,6 +77,14 @@ def test_native_monitoring_event_envelope_is_decoded() -> None:
     )
 
 
+def test_invalid_utf8_in_native_result_is_replaced_without_failing_reader() -> None:
+    decoded = NamedPipeNativeClient._decode_payload(
+        Frame(MessageType.RESULT, request_id=7, payload=b"valid\xbeinvalid")
+    )
+
+    assert decoded == {"ok": True, "text": "valid\ufffdinvalid"}
+
+
 def test_duplex_commands_keep_protocol_v1_compatible() -> None:
     start = encode_frame(Frame(MessageType.START_DUPLEX, request_id=8, payload=b"task"))
     stop = encode_frame(Frame(MessageType.STOP_DUPLEX, request_id=9))

@@ -46,12 +46,16 @@ test("keyframe requests remain backend directed", () => {
   );
 });
 
-test("idle screen events rotate focused reminders", () => {
-  const first = routeBackendEvent({ topic: "screen.idle", payload: { sequence: 1 } });
-  const second = routeBackendEvent({ topic: "screen.idle", payload: { sequence: 2 } });
-
-  assert.equal(first[0].type, "idle");
-  assert.equal(first[0].tone, "idle");
-  assert.match(first[0].text, /发呆/);
-  assert.match(second[0].text, /活动一下/);
+test("idle status stays silent and backend reminders use the idle bubble", () => {
+  assert.deepEqual(
+    routeBackendEvent({ topic: "screen.idle", payload: { idle_seconds: 120 } }),
+    []
+  );
+  assert.deepEqual(
+    routeBackendEvent({
+      topic: "assistant.message",
+      payload: { text: "是在摸鱼吗？", source: "screen_idle" },
+    }),
+    [{ type: "idle", text: "是在摸鱼吗？", tone: "idle", duration: 9000 }]
+  );
 });

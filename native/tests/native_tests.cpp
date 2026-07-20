@@ -249,6 +249,46 @@ int main() {
   }
   require(visual_changes.changed(large_frame), "broad visual change is detected");
 
+  const auto idle_start = std::chrono::steady_clock::time_point{};
+  ScreenIdleMonitor idle_screen(std::chrono::seconds(120),
+                                std::chrono::seconds(60),
+                                std::chrono::seconds(120), 7);
+  require(idle_screen.observe(true, idle_start) == ScreenIdleEvent::none,
+          "first changed frame initializes idle tracking");
+  require(idle_screen.observe(false, idle_start + std::chrono::seconds(119)) ==
+              ScreenIdleEvent::none,
+          "screen remains active before two minutes");
+  require(idle_screen.observe(false, idle_start + std::chrono::seconds(120)) ==
+              ScreenIdleEvent::entered_idle &&
+              idle_screen.idle(),
+          "unchanged screen enters idle at two minutes");
+  auto first_reminder_at = 0;
+  for (auto second = 121; second <= 240; ++second) {
+    if (idle_screen.observe(false, idle_start + std::chrono::seconds(second)) ==
+        ScreenIdleEvent::reminder_due) {
+      first_reminder_at = second;
+      break;
+    }
+  }
+  require(first_reminder_at >= 180 && first_reminder_at <= 240,
+          "idle reminder delay is randomized between 60 and 120 seconds");
+  auto second_reminder_at = 0;
+  for (auto second = first_reminder_at + 1; second <= first_reminder_at + 120;
+       ++second) {
+    if (idle_screen.observe(false, idle_start + std::chrono::seconds(second)) ==
+        ScreenIdleEvent::reminder_due) {
+      second_reminder_at = second;
+      break;
+    }
+  }
+  require(second_reminder_at - first_reminder_at >= 60 &&
+              second_reminder_at - first_reminder_at <= 120,
+          "each repeated idle reminder gets a new bounded delay");
+  require(idle_screen.observe(true, idle_start + std::chrono::seconds(400)) ==
+              ScreenIdleEvent::resumed &&
+              !idle_screen.idle(),
+          "screen change exits idle immediately");
+
   auto runtime = make_stub_omni_runtime(); runtime->load("stub");
   std::mutex mutex; std::vector<InferenceResult> results;
   LatestOnlyScheduler scheduler(*runtime, [&](InferenceResult r) { std::lock_guard lock(mutex); results.push_back(std::move(r)); });

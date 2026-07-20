@@ -236,7 +236,7 @@ async function loadMemoryDay(day) {
     memoryState.textContent = `${formatDay(day)} · ${memoryResult.value.event_count} 条活动`;
   } else {
     setMemoryEmpty("这一天还没有生成记忆");
-    memoryState.textContent = currentMemoryImages.length ? "已有日程图" : "暂无文档";
+    memoryState.textContent = currentMemoryImages.length ? "已有日程图" : "暂无日程记录";
   }
 }
 

@@ -5,7 +5,7 @@ set "JARVIS_ELECTRON=%JARVIS_DESKTOP%\node_modules\electron\dist\electron.exe"
 
 if not exist "%JARVIS_ELECTRON%" (
     echo AI Jarvis desktop dependencies are missing.
-    echo Run "npm install" in "%JARVIS_DESKTOP%" and try again.
+    echo Run "npm run deps:install" in "%JARVIS_DESKTOP%" and try again.
     pause
     exit /b 1
 )

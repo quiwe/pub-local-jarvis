@@ -6,6 +6,11 @@ function routeBackendEvent(event) {
     case "perception.completed":
       return [{ type: "scene", scene: payload.scene || "other" }];
     case "assistant.message":
+      if (payload.source === "screen_idle") {
+        return payload.text
+          ? [{ type: "idle", text: payload.text, tone: "idle", duration: 9000 }]
+          : [];
+      }
       return payload.text ? [{ type: "bubble", text: payload.text, tone: "info" }] : [];
     case "course.interaction":
       return payload.text ? [{ type: "bubble", text: payload.text, tone: "course" }] : [];
@@ -27,20 +32,8 @@ function routeBackendEvent(event) {
           duration: 12000,
         },
       ];
-    case "screen.idle": {
-      const reminders = [
-        "画面好久没动了，主人是在发呆吗？",
-        "还在同一个画面，起来活动一下再继续吧。",
-        "摸鱼时间有点长了，该把注意力拉回来了。",
-      ];
-      const sequence = Math.max(1, Number(payload.sequence) || 1);
-      return [{
-        type: "idle",
-        text: reminders[(sequence - 1) % reminders.length],
-        tone: "idle",
-        duration: 9000,
-      }];
-    }
+    case "screen.idle":
+      return [];
     case "worker.fatal":
       return [{ type: "fault", text: payload.error || "本地推理服务连接中断" }];
     default:

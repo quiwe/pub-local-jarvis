@@ -30,6 +30,31 @@ $PipeName = "\\.\pipe\AIJarvis.Worker.v1"
 $ModelRevision = "502eec5b03eaee9d0d2ce17a176e3490103c9a63"
 $CudaInstallVersion = "13.1"
 $CmakeInstallVersion = "4.3.4"
+$CmakeArchiveSha256 = "86e5fcafb38bdf58346a78b187c7b6b4f252ae5242cffe24c463a92bbd2e77d1"
+$MirrorFallbackEnabled = $env:JARVIS_DISABLE_DOWNLOAD_MIRROR -notmatch "^(?i:1|true|yes|on)$"
+$GithubMirrorPrefix = if ($env:JARVIS_GITHUB_MIRROR_PREFIX) {
+    $env:JARVIS_GITHUB_MIRROR_PREFIX
+} else {
+    "https://gh-proxy.com/"
+}
+$PypiPrimary = if ($env:JARVIS_PYPI_PRIMARY) {
+    $env:JARVIS_PYPI_PRIMARY
+} else {
+    "https://pypi.org/simple"
+}
+$PypiMirror = if ($env:JARVIS_PYPI_MIRROR) {
+    $env:JARVIS_PYPI_MIRROR
+} else {
+    "https://pypi.tuna.tsinghua.edu.cn/simple"
+}
+$DownloadTimeoutSeconds = if ($env:JARVIS_DOWNLOAD_TIMEOUT_SECONDS) {
+    [int]$env:JARVIS_DOWNLOAD_TIMEOUT_SECONDS
+} else {
+    60
+}
+if ($DownloadTimeoutSeconds -lt 5) {
+    throw "JARVIS_DOWNLOAD_TIMEOUT_SECONDS must be at least 5 seconds."
+}
 
 $ModelFiles = @(
     [pscustomobject]@{
@@ -98,6 +123,84 @@ function Invoke-ExternalWithHeartbeat {
     if ($exitCode -ne 0) {
         throw "Command failed with exit code $exitCode`: $FilePath $($Arguments -join ' ')"
     }
+}
+
+function Get-GitHubMirrorUri {
+    param([Parameter(Mandatory = $true)][string]$OfficialUri)
+
+    if (-not $MirrorFallbackEnabled -or [string]::IsNullOrWhiteSpace($GithubMirrorPrefix)) {
+        return $null
+    }
+    $prefix = $GithubMirrorPrefix.Trim()
+    if ($prefix.Contains("{url}")) {
+        return $prefix.Replace("{url}", $OfficialUri)
+    }
+    return $prefix.TrimEnd("/") + "/" + $OfficialUri
+}
+
+function Invoke-WebDownloadWithFallback {
+    param(
+        [Parameter(Mandatory = $true)][string]$OfficialUri,
+        [string]$MirrorUri,
+        [Parameter(Mandatory = $true)][string]$OutFile,
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+
+    $attempts = @(
+        [pscustomobject]@{ Name = "official source"; Uri = $OfficialUri }
+    )
+    if ($MirrorFallbackEnabled -and $MirrorUri -and $MirrorUri -ne $OfficialUri) {
+        $attempts += [pscustomobject]@{ Name = "mainland China mirror"; Uri = $MirrorUri }
+    }
+    $partialPath = "$OutFile.partial"
+    $failures = [System.Collections.Generic.List[string]]::new()
+    foreach ($attempt in $attempts) {
+        Remove-Item -LiteralPath $partialPath -Force -ErrorAction SilentlyContinue
+        try {
+            Invoke-WebRequest -Uri $attempt.Uri -OutFile $partialPath -UseBasicParsing `
+                -TimeoutSec $DownloadTimeoutSeconds
+            Move-Item -LiteralPath $partialPath -Destination $OutFile -Force
+            return
+        } catch {
+            Remove-Item -LiteralPath $partialPath -Force -ErrorAction SilentlyContinue
+            $failures.Add("$($attempt.Name): $($_.Exception.Message)")
+            if ($attempt -ne $attempts[-1]) {
+                Write-Warning "$Description failed from the official source; retrying with the configured mainland China mirror."
+            }
+        }
+    }
+    throw "$Description failed from all configured sources.`n$($failures -join "`n")"
+}
+
+function Invoke-PipInstallWithFallback {
+    param(
+        [Parameter(Mandatory = $true)][string]$Python,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+
+    $indexes = @(
+        [pscustomobject]@{ Name = "official PyPI"; Uri = $PypiPrimary }
+    )
+    if ($MirrorFallbackEnabled -and $PypiMirror -and $PypiMirror -ne $PypiPrimary) {
+        $indexes += [pscustomobject]@{ Name = "mainland China PyPI mirror"; Uri = $PypiMirror }
+    }
+    $failures = [System.Collections.Generic.List[string]]::new()
+    foreach ($index in $indexes) {
+        try {
+            Invoke-External -FilePath $Python -Arguments (@(
+                "-m", "pip", "install", "--disable-pip-version-check",
+                "--timeout", "$DownloadTimeoutSeconds", "--retries", "1",
+                "--index-url", $index.Uri
+            ) + $Arguments)
+            return
+        } catch {
+            $failures.Add("$($index.Name): $($_.Exception.Message)")
+            if ($index -ne $indexes[-1]) {
+                Write-Warning "Python dependency installation failed from official PyPI; retrying with the configured mainland China mirror."
+            }
+        }
+    }
+    throw "Python dependency installation failed from all configured sources.`n$($failures -join "`n")"
 }
 
 function Refresh-ProcessEnvironment {
@@ -196,7 +299,6 @@ function Install-PortableCMake {
     $toolsRoot = Join-Path $RuntimeRoot "tools"
     $archiveName = "cmake-$CmakeInstallVersion-windows-x86_64.zip"
     $archivePath = Join-Path $toolsRoot $archiveName
-    $checksumsPath = Join-Path $toolsRoot "cmake-$CmakeInstallVersion-SHA-256.txt"
     $cmakeRoot = Join-Path $toolsRoot "cmake-$CmakeInstallVersion-windows-x86_64"
     $cmakePath = Join-Path $cmakeRoot "bin\cmake.exe"
     if (Test-Path -LiteralPath $cmakePath -PathType Leaf) {
@@ -206,21 +308,15 @@ function Install-PortableCMake {
     Write-Step "Installing portable CMake $CmakeInstallVersion"
     New-Item -ItemType Directory -Path $toolsRoot -Force | Out-Null
     $releaseRoot = "https://github.com/Kitware/CMake/releases/download/v$CmakeInstallVersion"
-    Invoke-WebRequest -Uri "$releaseRoot/cmake-$CmakeInstallVersion-SHA-256.txt" `
-        -OutFile $checksumsPath -UseBasicParsing
-    $checksumLine = Get-Content -LiteralPath $checksumsPath |
-        Where-Object { $_ -match "\s+$([regex]::Escape($archiveName))$" } |
-        Select-Object -First 1
-    if (-not $checksumLine -or $checksumLine -notmatch "^([0-9a-fA-F]{64})") {
-        throw "The official CMake checksum list does not contain $archiveName."
-    }
-    $expectedHash = $Matches[1].ToLowerInvariant()
     if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf) -or
-        (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedHash) {
-        Invoke-WebRequest -Uri "$releaseRoot/$archiveName" -OutFile $archivePath -UseBasicParsing
+        (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $CmakeArchiveSha256) {
+        $archiveUri = "$releaseRoot/$archiveName"
+        Invoke-WebDownloadWithFallback -OfficialUri $archiveUri `
+            -MirrorUri (Get-GitHubMirrorUri -OfficialUri $archiveUri) `
+            -OutFile $archivePath -Description "Portable CMake archive"
     }
     $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($actualHash -ne $expectedHash) {
+    if ($actualHash -ne $CmakeArchiveSha256) {
         throw "Portable CMake archive SHA-256 mismatch."
     }
     Expand-Archive -LiteralPath $archivePath -DestinationPath $toolsRoot -Force
@@ -644,11 +740,11 @@ function Ensure-PythonEnvironment {
         throw ".venv uses an unsupported Python version. Remove .venv and run this launcher again."
     }
 
-    Invoke-External -FilePath $venvPython -Arguments @(
-        "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"
+    Invoke-PipInstallWithFallback -Python $venvPython -Arguments @(
+        "--upgrade", "pip", "setuptools", "wheel"
     )
-    Invoke-External -FilePath $venvPython -Arguments @(
-        "-m", "pip", "install", "-e", $ProjectRoot, "huggingface-hub>=0.30,<2"
+    Invoke-PipInstallWithFallback -Python $venvPython -Arguments @(
+        "-e", $ProjectRoot, "huggingface-hub>=0.30,<2"
     )
     return $venvPython
 }
@@ -691,33 +787,17 @@ function Ensure-Models {
         if ($HfToken) {
             $env:HF_TOKEN = $HfToken
         }
-        $env:JARVIS_MODEL_DIR = $ModelRoot
-        $env:JARVIS_MODEL_REVISION = $ModelRevision
-        $downloadCode = @'
-import os
-from huggingface_hub import snapshot_download
-
-snapshot_download(
-    repo_id="openbmb/MiniCPM-o-4_5-gguf",
-    revision=os.environ["JARVIS_MODEL_REVISION"],
-    local_dir=os.environ["JARVIS_MODEL_DIR"],
-    allow_patterns=[
-        "MiniCPM-o-4_5-Q4_K_M.gguf",
-        "vision/MiniCPM-o-4_5-vision-F16.gguf",
-        "audio/MiniCPM-o-4_5-audio-F16.gguf",
-    ],
-)
-'@
-        # Windows PowerShell 5 can strip nested quotes from a multiline python -c
-        # argument. A UTF-8 helper file keeps the Python source byte-for-byte intact.
-        New-Item -ItemType Directory -Path $RuntimeRoot -Force | Out-Null
-        $downloadScriptPath = Join-Path $RuntimeRoot "download-models.py"
-        [IO.File]::WriteAllText(
-            $downloadScriptPath,
-            $downloadCode,
-            [Text.UTF8Encoding]::new($false)
+        if (-not $env:HF_HUB_ETAG_TIMEOUT) {
+            $env:HF_HUB_ETAG_TIMEOUT = "$DownloadTimeoutSeconds"
+        }
+        if (-not $env:HF_HUB_DOWNLOAD_TIMEOUT) {
+            $env:HF_HUB_DOWNLOAD_TIMEOUT = "$DownloadTimeoutSeconds"
+        }
+        Invoke-External -FilePath $VenvPython -Arguments @(
+            "-m", "jarvis_backend.model_download",
+            "--local-dir", $ModelRoot,
+            "--revision", $ModelRevision
         )
-        Invoke-External -FilePath $VenvPython -Arguments @($downloadScriptPath)
     }
 
     if (-not (Test-ModelFiles -VerifyHash)) {

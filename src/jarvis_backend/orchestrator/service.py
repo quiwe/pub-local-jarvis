@@ -4,6 +4,7 @@ import base64
 import binascii
 import json
 import logging
+import random
 import re
 import time
 from collections import deque
@@ -32,6 +33,13 @@ logger = logging.getLogger(__name__)
 ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets"
 
 AMBIENT_DUPLEX_SESSION_ID = "jarvis-ambient"
+SCREEN_IDLE_MESSAGES = (
+    "是在摸鱼吗？",
+    "ZZZ...",
+    "摸鱼小神仙是你吗？？",
+    "屏幕都快睡着了。",
+    "今天的鱼摸得很有节奏嘛。",
+)
 AMBIENT_DUPLEX_INSTRUCTION = (
     "持续理解当前屏幕与系统音频，默认保持安静，但在画面出现有意义的变化、明确细节或"
     "值得回应的内容时可以适度主动说话。普通网页和视频"
@@ -146,6 +154,7 @@ class OrchestrationService:
         self._discarding_duplex_fragment: tuple[str | None, float] | None = None
         self._duplex_session_id: str | None = None
         self._duplex_instruction = ""
+        self._screen_idle = False
         self._last_course_interaction = ""
         self._last_course_interaction_at = float("-inf")
         self._last_keyframe_requested_at: dict[str, float] = {}
@@ -192,6 +201,7 @@ class OrchestrationService:
             return await self.stop_duplex()
         result = await self.native_client.request(method, arguments)
         if method in {"start_monitoring", "resume_monitoring"}:
+            self._screen_idle = False
             try:
                 await self.start_duplex(
                     AMBIENT_DUPLEX_INSTRUCTION,
@@ -201,6 +211,7 @@ class OrchestrationService:
                 await self.native_client.request("stop_monitoring", {})
                 raise
         elif method in {"pause_monitoring", "stop_monitoring"}:
+            self._screen_idle = False
             previous_id = self._duplex_session_id
             self._duplex_session_id = None
             self._duplex_instruction = ""
@@ -944,11 +955,40 @@ class OrchestrationService:
 
     async def _on_native_event(self, payload: dict[str, Any]) -> None:
         topic = str(payload.get("type", "native.event"))
+        if topic == "screen.idle":
+            self._screen_idle = True
+            self._pending_duplex_fragment = None
+            self._discarding_duplex_fragment = None
+            await self.events.publish(Event(topic, payload))
+            return
+        if topic == "screen.idle.reminder":
+            await self.events.publish(Event(topic, payload))
+            if self._screen_idle:
+                await self.events.publish(
+                    Event(
+                        "assistant.message",
+                        {
+                            "text": random.choice(SCREEN_IDLE_MESSAGES),
+                            "source": "screen_idle",
+                        },
+                    )
+                )
+            return
+        if topic == "screen.active":
+            self._screen_idle = False
+            self._pending_duplex_fragment = None
+            self._discarding_duplex_fragment = None
+            await self.events.publish(Event(topic, payload))
+            return
         if topic == "perception.completed":
+            if self._screen_idle:
+                return
             await self._handle_perception(payload)
             return
         if topic == "duplex.decision":
             await self.events.publish(Event(topic, payload))
+            if self._screen_idle:
+                return
             if payload.get("decision") != "speak" or payload.get("ok") is not True:
                 if payload.get("decision") == "listen":
                     self._pending_duplex_fragment = None

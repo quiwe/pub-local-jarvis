@@ -162,7 +162,7 @@ class RealOmniRuntime final : public IOmniRuntime {
   void load(std::string model_path) override {
     unload();
     round_ = 0;
-    const fs::path root(model_path);
+    const fs::path root = fs::u8path(model_path);
     const auto validation = runtime::validate_minicpm_o_4_5_layout(root);
     if (!validation.ok()) throw std::runtime_error(validation_error(validation));
 

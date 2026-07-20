@@ -15,10 +15,9 @@ The full MIT text retained for this component is in
 verification are in `third_party/runtime/VENDOR.json`.
 
 The SHA-256-verified source snapshot is retained under
-`third_party/runtime/vendor`. It is not compiled into the default build because
-the pinned upstream still couples its omni target to the excluded speech stack.
-Acquisition metadata and archive verification are in
-`third_party/runtime/VENDOR.json`.
+`third_party/runtime/vendor`. The real launcher applies the checksum-pinned
+text-input patch and compiles the LLM/VPM/APM provider with TTS loading disabled.
+Stub builds and the standalone runtime boundary do not compile that provider.
 
 ## Model weights
 

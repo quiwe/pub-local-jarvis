@@ -46,8 +46,14 @@ size, and GGUF magic are not cryptographic verification.
 `VENDOR.json` is authoritative. Download exactly its immutable archive URL,
 verify its SHA-256, and extract into a build cache outside this repository.
 Do not use a moving branch, a symlink, or a source directory from another
-project checkout. CMake never fetches source and offline builds remain
-possible.
+project checkout. Normal project configuration never fetches source and
+offline builds use the checked-in `vendor/` snapshot.
+
+For independently refreshing an external cache, `cmake/AcquireUpstream.cmake`
+tries the immutable official URL first, then the configured GitHub mirror after
+an inactive connection times out. Both paths must match the SHA-256 in
+`VENDOR.json`; set `JARVIS_DISABLE_DOWNLOAD_MIRROR=1` to require the official
+source only.
 
 Example configuration after acquisition:
 

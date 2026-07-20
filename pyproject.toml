@@ -6,6 +6,8 @@ build-backend = "hatchling.build"
 name = "aijarvis-backend"
 version = "0.1.0"
 description = "Local-first AI Jarvis control plane"
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115,<1",
@@ -27,6 +29,15 @@ jarvis-backend = "jarvis_backend.app:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jarvis_backend"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/config",
+  "/README.md",
+  "/LICENSE",
+  "/THIRD_PARTY_NOTICES.md",
+]
 
 [tool.pytest.ini_options]
 addopts = "-q"

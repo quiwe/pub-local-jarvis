@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <random>
 #include <vector>
 
 namespace jarvis {
@@ -77,5 +78,63 @@ bool FrameChangeDetector::changed(const VideoFrame& frame) noexcept {
                       average_delta >= average_delta_threshold_;
   if (result) previous_ = std::move(current);
   return result;
+}
+
+ScreenIdleMonitor::ScreenIdleMonitor(Duration idle_after, Duration reminder_min,
+                                     Duration reminder_max)
+    : ScreenIdleMonitor(idle_after, reminder_min, reminder_max,
+                        std::random_device{}()) {}
+
+ScreenIdleMonitor::ScreenIdleMonitor(Duration idle_after, Duration reminder_min,
+                                     Duration reminder_max,
+                                     std::uint32_t random_seed)
+    : idle_after_(std::max(idle_after, Duration::zero())),
+      reminder_min_(std::max(
+          reminder_min,
+          std::chrono::duration_cast<Duration>(std::chrono::seconds(1)))),
+      reminder_max_(std::max(reminder_max, reminder_min_)),
+      random_(random_seed) {}
+
+ScreenIdleEvent ScreenIdleMonitor::observe(bool changed, Clock::time_point now) {
+  if (!initialized_) {
+    initialized_ = true;
+    last_change_ = now;
+    return ScreenIdleEvent::none;
+  }
+  if (changed) {
+    last_change_ = now;
+    next_reminder_ = {};
+    if (idle_) {
+      idle_ = false;
+      return ScreenIdleEvent::resumed;
+    }
+    return ScreenIdleEvent::none;
+  }
+  if (!idle_ && now - last_change_ >= idle_after_) {
+    idle_ = true;
+    next_reminder_ = now + next_reminder_delay();
+    return ScreenIdleEvent::entered_idle;
+  }
+  if (idle_ && now >= next_reminder_) {
+    next_reminder_ = now + next_reminder_delay();
+    return ScreenIdleEvent::reminder_due;
+  }
+  return ScreenIdleEvent::none;
+}
+
+void ScreenIdleMonitor::reset() noexcept {
+  initialized_ = false;
+  idle_ = false;
+  last_change_ = {};
+  next_reminder_ = {};
+}
+
+ScreenIdleMonitor::Duration ScreenIdleMonitor::next_reminder_delay() {
+  const auto minimum =
+      std::chrono::duration_cast<std::chrono::seconds>(reminder_min_).count();
+  const auto maximum =
+      std::chrono::duration_cast<std::chrono::seconds>(reminder_max_).count();
+  std::uniform_int_distribution<long long> seconds(minimum, maximum);
+  return std::chrono::seconds(seconds(random_));
 }
 } // namespace jarvis

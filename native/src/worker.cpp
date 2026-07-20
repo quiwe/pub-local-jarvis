@@ -24,8 +24,6 @@ namespace {
 constexpr auto kPerceptionInterval = std::chrono::seconds(3);
 constexpr auto kAudiblePerceptionInterval = std::chrono::seconds(9);
 constexpr auto kPerceptionHeartbeat = std::chrono::minutes(5);
-constexpr auto kIdleReminderAfter = std::chrono::minutes(10);
-constexpr auto kIdleReminderRepeat = std::chrono::minutes(15);
 constexpr std::size_t kRecentPerceptionLimit = 4;
 constexpr std::string_view kTextOnlyPrefix = "[[JARVIS_TEXT_ONLY]]\n";
 constexpr std::array<std::string_view, 6> kGameBarrageAngles{
@@ -375,11 +373,11 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
     auto next_perception = deadline;
     auto last_perception = deadline - kPerceptionHeartbeat;
     auto last_visual_change = deadline;
-    auto next_idle_reminder = deadline + kIdleReminderAfter;
     bool perception_pending = true;
     std::uint32_t idle_reminder_sequence{};
     bool previous_audio_active = false;
     FrameChangeDetector screen_changes;
+    ScreenIdleMonitor idle_screen;
     bool first_frame_logged = false;
     auto last_capture_error = std::chrono::steady_clock::time_point{};
     std::vector<float> rolling_audio;
@@ -462,6 +460,35 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
           }
           const auto now = std::chrono::steady_clock::now();
           const bool visually_changed = foreground_changed || screen_changes.changed(*frame);
+          const auto idle_event = idle_screen.observe(visually_changed, now);
+          if (visually_changed) {
+            last_visual_change = now;
+            idle_reminder_sequence = 0;
+          }
+          if (idle_event == ScreenIdleEvent::entered_idle) {
+            perception_pending = false;
+            pending_perception_audio.clear();
+            const auto idle_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+                                          now - last_visual_change)
+                                          .count();
+            nlohmann::json event{{"native_event", "screen.idle"},
+                                 {"idle_seconds", idle_seconds}};
+            emit_monitoring_event(event.dump());
+          } else if (idle_event == ScreenIdleEvent::reminder_due) {
+            ++idle_reminder_sequence;
+            const auto idle_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+                                          now - last_visual_change)
+                                          .count();
+            nlohmann::json event{{"native_event", "screen.idle.reminder"},
+                                 {"idle_seconds", idle_seconds},
+                                 {"sequence", idle_reminder_sequence}};
+            emit_monitoring_event(event.dump());
+          } else if (idle_event == ScreenIdleEvent::resumed) {
+            nlohmann::json event{{"native_event", "screen.active"},
+                                 {"idle_seconds", 0}};
+            emit_monitoring_event(event.dump());
+          }
+          const bool screen_idle = idle_screen.idle();
           bool course_active = false;
           {
             std::lock_guard lock(mutex_);
@@ -469,7 +496,7 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
                             recent_perceptions_.back().scene == "course";
           }
           const bool active_course_audio = course_active && audio_active;
-          if (duplex_task_active_.load()) {
+          if (duplex_task_active_.load() && !screen_idle) {
             auto duplex_audio = std::make_shared<std::vector<float>>(
                 latest_audio_window->end() - 16'000, latest_audio_window->end());
             {
@@ -481,29 +508,15 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
             }
             duplex_input_ready_.notify_one();
           }
-          if (visually_changed || active_course_audio) {
-            last_visual_change = now;
-            next_idle_reminder = now + kIdleReminderAfter;
-            idle_reminder_sequence = 0;
-          } else if (now >= next_idle_reminder) {
-            ++idle_reminder_sequence;
-            const auto idle_seconds = std::chrono::duration_cast<std::chrono::seconds>(
-                                          now - last_visual_change)
-                                          .count();
-            nlohmann::json event{{"native_event", "screen.idle"},
-                                 {"idle_seconds", idle_seconds},
-                                 {"sequence", idle_reminder_sequence}};
-            emit_monitoring_event(event.dump());
-            next_idle_reminder = now + kIdleReminderRepeat;
-          }
           const bool heartbeat_due =
               now - last_perception >= kPerceptionHeartbeat &&
-              now - last_visual_change < kIdleReminderAfter;
+              !screen_idle;
           const bool audible_probe_due =
               audio_active &&
               (audio_started || now - last_perception >= kAudiblePerceptionInterval);
           const bool should_analyze =
-              visually_changed || active_course_audio || audible_probe_due || heartbeat_due;
+              !screen_idle &&
+              (visually_changed || active_course_audio || audible_probe_due || heartbeat_due);
           perception_pending = perception_pending || should_analyze;
           if (perception_pending && now >= next_perception && scheduler_ &&
               !scheduler_->busy()) {

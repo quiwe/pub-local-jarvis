@@ -920,6 +920,65 @@ def test_duplex_model_speak_routing_and_compatibility_api(tmp_path):
         }
 
 
+def test_screen_idle_reminders_bypass_model_until_screen_changes(tmp_path, monkeypatch):
+    monkeypatch.setattr(service_module.random, "choice", lambda values: values[0])
+    with make_client(tmp_path) as client:
+        native = client.app.state.orchestrator.native_client
+
+        client.portal.call(
+            native.emit,
+            {"type": "screen.idle", "idle_seconds": 120},
+        )
+        client.portal.call(
+            native.emit,
+            {
+                "type": "duplex.decision",
+                "session_id": "jarvis-ambient",
+                "sequence": 1,
+                "ok": True,
+                "decision": "speak",
+                "text": "这条模型回复不应显示。",
+            },
+        )
+        client.portal.call(
+            native.emit,
+            {"type": "screen.idle.reminder", "idle_seconds": 180, "sequence": 1},
+        )
+        time.sleep(0.03)
+
+        messages = [
+            event["payload"]
+            for event in client.get("/api/v1/events").json()
+            if event["topic"] == "assistant.message"
+        ]
+        assert messages == [{"text": "是在摸鱼吗？", "source": "screen_idle"}]
+
+        client.portal.call(native.emit, {"type": "screen.active", "idle_seconds": 0})
+        client.portal.call(
+            native.emit,
+            {
+                "type": "duplex.decision",
+                "session_id": "jarvis-ambient",
+                "sequence": 2,
+                "ok": True,
+                "decision": "speak",
+                "text": "下载完成了，文件可以直接用了。",
+            },
+        )
+        time.sleep(0.03)
+
+        messages = [
+            event["payload"]
+            for event in client.get("/api/v1/events").json()
+            if event["topic"] == "assistant.message"
+        ]
+        assert messages[-1] == {
+            "text": "下载完成了，文件可以直接用了。",
+            "source": "duplex",
+            "session_id": "jarvis-ambient",
+        }
+
+
 def test_duplex_task_rejects_empty_instruction(tmp_path):
     with make_client(tmp_path) as client:
         response = client.post("/api/v1/duplex", json={"instruction": "   "})
