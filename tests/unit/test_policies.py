@@ -1,5 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from jarvis_backend.barrage import BarrageDecision, BarrageItem, BarragePolicy
 from jarvis_backend.orchestrator.scene import CourseSceneStabilizer, SceneHysteresis
 
@@ -32,6 +34,11 @@ def test_default_course_scene_stabilizer_requires_two_consistent_samples() -> No
 
     assert scene.observe("course") == "other"
     assert scene.observe("course") == "course"
+
+
+def test_course_scene_stabilizer_rejects_zero_game_entry_samples() -> None:
+    with pytest.raises(ValueError, match="sample counts must be positive"):
+        CourseSceneStabilizer(game_enter_samples=0)
 
 
 def test_barrage_rejects_stale_and_duplicate_items() -> None:

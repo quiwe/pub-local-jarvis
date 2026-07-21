@@ -11,7 +11,7 @@ import jarvis_backend.orchestrator.service as service_module
 from jarvis_backend.app import create_app
 from jarvis_backend.courses import CourseStatus
 from jarvis_backend.memory import MemoryEvent
-from jarvis_backend.settings import CourseSettings, MemorySettings, Settings
+from jarvis_backend.settings import CourseSettings, MemorySettings, SceneSettings, Settings
 
 
 def make_client(tmp_path):
@@ -313,6 +313,8 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
         }
         client.portal.call(native.emit, course_payload)
         client.portal.call(native.emit, {**course_payload, "request_id": (1 << 63) + 3})
+        client.portal.call(native.emit, {**course_payload, "request_id": (1 << 63) + 4})
+        client.portal.call(native.emit, {**course_payload, "request_id": (1 << 63) + 5})
         time.sleep(0.02)
         courses = client.get("/api/v1/courses").json()
         assert len(courses) == 1
@@ -339,7 +341,7 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
 
         client.app.state.orchestrator.settings.courses.exit_grace_seconds = 0
         client.app.state.orchestrator.settings.courses.exit_samples = 3
-        for offset in range(4, 7):
+        for offset in range(6, 9):
             client.portal.call(
                 native.emit,
                 {
@@ -347,7 +349,7 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
                     "request_id": (1 << 63) + offset,
                     "text": '{"scene":"other","confidence":0.8,"barrage":"",'
                     '"course_note":"","course_title":"",'
-                    f'"assistant_message":"{"下载已经完成。" if offset == 4 else ""}"}}',
+                    f'"assistant_message":"{"下载已经完成。" if offset == 6 else ""}"}}',
                 },
             )
         time.sleep(0.03)
@@ -366,7 +368,7 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
             native.emit,
             {
                 "type": "perception.completed",
-                "request_id": (1 << 63) + 7,
+                "request_id": (1 << 63) + 9,
                 "text": (
                     '{"scene":"other","confidence":0.9,'
                     '"assistant_message":"新场景已经稳定，可以按刚才的目标继续推进。"}'
@@ -376,6 +378,122 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
         time.sleep(0.02)
         events = client.get("/api/v1/events").json()
         assert not any(event["topic"] == "assistant.message" for event in events)
+
+
+async def test_display_scene_uses_configured_entry_and_exit_samples(tmp_path):
+    settings = Settings(
+        scene=SceneSettings(
+            display_enter_samples=2,
+            game_enter_samples=1,
+            display_exit_samples=2,
+        ),
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(sessions_root=tmp_path / "sessions"),
+    )
+    orchestrator = create_app(settings=settings).state.orchestrator
+
+    async def perceive(scene):
+        payload = {
+            "scene": scene,
+            "confidence": 0.95,
+            "scene_evidence": {
+                "interactive_gameplay": scene == "game",
+                "game_video_or_stream": False,
+                "fullscreen_game_media": False,
+                "non_game_surface": scene == "other",
+            },
+            "observation": "玩家正在第一人称游戏中移动" if scene == "game" else "普通桌面",
+        }
+        await orchestrator._handle_perception(
+            {"type": "perception.completed", "text": json.dumps(payload, ensure_ascii=False)}
+        )
+        return orchestrator.events.history("perception.completed")[-1].payload["scene"]
+
+    assert await perceive("game") == "game"
+    assert await perceive("other") == "game"
+    assert await perceive("other") == "other"
+
+
+async def test_game_classification_switches_scene_before_barrage_generation(tmp_path):
+    settings = Settings(
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(sessions_root=tmp_path / "sessions"),
+    )
+    orchestrator = create_app(settings=settings).state.orchestrator
+    classification = {
+        "scene": "game",
+        "confidence": 0.96,
+        "scene_evidence": {
+            "game_surface": True,
+            "interactive_gameplay": True,
+            "game_video_or_stream": False,
+            "fullscreen_game_media": False,
+        },
+        "observation": "玩家正在第一人称射击游戏中移动",
+        "barrage_pending": True,
+    }
+
+    await orchestrator._handle_perception(
+        {
+            "type": "perception.completed",
+            "text": json.dumps(classification, ensure_ascii=False),
+        }
+    )
+
+    completed = orchestrator.events.history("perception.completed")[-1].payload
+    assert completed["scene"] == "game"
+    assert completed["observed_scene"] == "game"
+    assert completed["barrage_pending"] is True
+    assert completed["barrage_source"] == "pending"
+    assert completed["barrage_candidates"] == []
+    assert orchestrator.events.history("barrage.generated") == []
+
+
+async def test_uncertain_game_exit_requires_more_samples(tmp_path):
+    settings = Settings(
+        scene=SceneSettings(
+            display_enter_samples=2,
+            game_enter_samples=1,
+            display_exit_samples=2,
+            game_uncertain_exit_samples=4,
+        ),
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(sessions_root=tmp_path / "sessions"),
+    )
+    orchestrator = create_app(settings=settings).state.orchestrator
+    orchestrator.display_scene.force("game")
+
+    async def perceive_other(*, non_game_surface=False):
+        await orchestrator._handle_perception(
+            {
+                "type": "perception.completed",
+                "text": json.dumps(
+                    {
+                        "scene": "other",
+                        "confidence": 0.95,
+                        "scene_evidence": {
+                            "non_game_surface": non_game_surface,
+                            "ordinary_browsing": False,
+                        },
+                        "observation": "" if not non_game_surface else "文件管理器",
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        )
+        return orchestrator.events.history("perception.completed")[-1].payload
+
+    for _ in range(3):
+        result = await perceive_other()
+        assert result["scene"] == "game"
+        assert result["uncertain_game_exit"] is True
+    assert (await perceive_other())["scene"] == "other"
+
+    orchestrator.display_scene.force("game")
+    assert (await perceive_other(non_game_surface=True))["scene"] == "game"
+    result = await perceive_other(non_game_surface=True)
+    assert result["scene"] == "other"
+    assert result["uncertain_game_exit"] is False
 
 
 async def test_auto_course_survives_transient_scene_misclassification(
@@ -1007,8 +1125,10 @@ def test_perception_keeps_internal_observation_separate_from_bubble_text():
                 "scene": "game",
                 "confidence": 0.99,
                 "scene_evidence": {
+                    "game_surface": True,
                     "interactive_gameplay": False,
                     "game_video_or_stream": True,
+                    "fullscreen_game_media": False,
                 },
             },
             "other",
@@ -1016,12 +1136,43 @@ def test_perception_keeps_internal_observation_separate_from_bubble_text():
         (
             {
                 "scene": "game",
+                "confidence": 0.74,
+                "scene_evidence": {
+                    "game_surface": True,
+                    "interactive_gameplay": False,
+                    "game_video_or_stream": True,
+                    "fullscreen_game_media": True,
+                },
+                "barrage_candidates": ["这段操作节奏很紧凑"],
+            },
+            "game",
+        ),
+        (
+            {
+                "scene": "game",
                 "confidence": 0.99,
                 "scene_evidence": {
+                    "game_surface": True,
                     "interactive_gameplay": True,
                     "game_video_or_stream": False,
+                    "fullscreen_game_media": False,
                 },
                 "barrage_candidates": ["资源充足，可以推进"],
+            },
+            "game",
+        ),
+        (
+            {
+                "scene": "other",
+                "confidence": 0.96,
+                "scene_evidence": {
+                    "game_surface": True,
+                    "interactive_gameplay": False,
+                    "game_video_or_stream": False,
+                    "fullscreen_game_media": False,
+                    "ordinary_browsing": False,
+                },
+                "observation": "回合结束画面仍显示比分板、小地图和游戏 HUD",
             },
             "game",
         ),
@@ -1194,7 +1345,9 @@ def test_truncated_perception_recovers_complete_scene_evidence(tmp_path):
     with make_client(tmp_path) as client:
         result = client.app.state.orchestrator._parse_perception(
             '{"scene":"game","confidence":0.93,"scene_evidence":'
-            '{"interactive_gameplay":true,"game_video_or_stream":false,'
+            '{"game_surface":true,"interactive_gameplay":true,'
+            '"game_video_or_stream":false,'
+            '"fullscreen_game_media":false,'
             '"active_instruction":false,"course_surface":false,'
             '"instructional_audio":false,"ordinary_browsing":false},'
             '"observation":"玩家正在操控角色移动","course_transcript":"'
@@ -1331,3 +1484,45 @@ def test_game_advice_falls_back_to_barrage_when_model_uses_wrong_field(tmp_path)
         events = client.get("/api/v1/events").json()
         generated = [event for event in events if event["topic"] == "barrage.generated"]
         assert generated[-1]["payload"]["text"] == "先补向日葵，经济别断"
+
+
+def test_confirmed_game_without_native_generation_stays_silent(tmp_path):
+    with make_client(tmp_path) as client:
+        native = client.app.state.orchestrator.native_client
+        client.app.state.orchestrator.display_scene.force("game")
+        client.portal.call(
+            native.emit,
+            {
+                "type": "perception.completed",
+                "request_id": 100,
+                "text": json.dumps(
+                    {
+                        "scene": "game",
+                        "confidence": 0.95,
+                        "scene_evidence": {
+                            "interactive_gameplay": True,
+                            "game_video_or_stream": False,
+                            "fullscreen_game_media": False,
+                        },
+                        "observation": "玩家向前移动并探索新的区域",
+                        "barrage_candidates": [],
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        )
+
+        time.sleep(0.02)
+        generated = [
+            event["payload"]["text"]
+            for event in client.get("/api/v1/events").json()
+            if event["topic"] == "barrage.generated"
+        ]
+        assert generated == []
+        completed = next(
+            event
+            for event in reversed(client.get("/api/v1/events").json())
+            if event["topic"] == "perception.completed"
+        )
+        assert completed["payload"]["barrage_source"] == "missing_generation"
+        assert completed["payload"]["barrage_fallback_reason"] == "empty_candidates"

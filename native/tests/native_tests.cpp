@@ -56,21 +56,24 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
     {
       std::lock_guard lock(mutex_);
       contexts_[request.id] = bool(request.frame) && bool(request.audio_16khz_mono);
+      frame_contexts_[request.id] = bool(request.frame);
+      audio_contexts_[request.id] = bool(request.audio_16khz_mono);
       audible_contexts_[request.id] =
           request.audio_16khz_mono &&
           std::ranges::any_of(*request.audio_16khz_mono,
                               [](float sample) { return sample != 0.0F; });
       prompts_[request.id] = request.prompt;
+      max_output_tokens_[request.id] = request.max_output_tokens;
     }
     changed_.notify_all();
     if (request.prompt.find("场景分类与客观信息提取器") != std::string::npos &&
         request.prompt.find("不得生成游戏弹幕") != std::string::npos) {
       return {request.id,
-              R"({"scene":"game","confidence":0.9,"scene_evidence":{"interactive_gameplay":true,"game_video_or_stream":false},"observation":"玩家正在进行测试游戏"})",
+              R"({"scene":"game","confidence":0.9,"scene_evidence":{"game_surface":true,"interactive_gameplay":true,"game_video_or_stream":false,"fullscreen_game_media":false,"non_game_surface":false},"observation":"玩家正在进行测试游戏")",
               false};
     }
     return {request.id,
-            R"({"scene":"game","confidence":0.9,"scene_evidence":{"interactive_gameplay":true,"game_video_or_stream":false},"observation":"玩家正在进行测试游戏","barrage_candidates":["测试弹幕"]})",
+            R"({"barrage_candidates":[]})",
             false};
   }
   bool start_duplex(std::string instruction) override {
@@ -130,8 +133,12 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
       if (prompt.find("不得生成游戏弹幕") != std::string::npos &&
           prompt.find("场景判定") != std::string::npos &&
           prompt.find("scene_evidence") != std::string::npos &&
+          prompt.find("game_surface") != std::string::npos &&
+          prompt.find("non_game_surface") != std::string::npos &&
+          prompt.find("fullscreen_game_media") != std::string::npos &&
           prompt.find("course_interaction") != std::string::npos &&
-          prompt.find("游戏视频、直播、回放") != std::string::npos &&
+          prompt.find("全屏播放的游戏视频") != std::string::npos &&
+          prompt.find("网页内播放器、攻略搜索或详情页") != std::string::npos &&
           prompt.find("搜索结果、与音频无关的普通网页") != std::string::npos &&
           prompt.find("老师或讲师不需要出现在画面中") != std::string::npos &&
           prompt.find("静态 PPT 或笔记") != std::string::npos &&
@@ -144,23 +151,35 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
         clean_classification = true;
       }
       if (prompt.find("已经确认当前是 game") != std::string::npos &&
-          prompt.find("你不会再次收到截图或音频") != std::string::npos &&
-          prompt.find("scene_evidence") != std::string::npos &&
+          prompt.find("你会收到分类时使用的当前游戏截图") != std::string::npos &&
+          prompt.find("先在内部仔细理解截图") != std::string::npos &&
+          prompt.find("{\"barrage_candidates\"") != std::string::npos &&
+          prompt.find("{\"scene\":\"game\"") == std::string::npos &&
+          prompt.find("仅供生成，禁止写回") != std::string::npos &&
           prompt.find("必须生成恰好 3 条") != std::string::npos &&
           prompt.find("冷却、去重和是否展示由后端负责") != std::string::npos &&
           prompt.find("本轮游戏弹幕主角度") != std::string::npos &&
-          prompt.find("<game_profile>关注生存资源</game_profile>") != std::string::npos) {
+          prompt.find("必须显著体现其中的称呼、语气和角色风格") !=
+              std::string::npos &&
+          prompt.find("<game_profile>专业毒舌嘴臭教练") != std::string::npos &&
+          prompt.find("中间的重复或次要要求已压缩") != std::string::npos &&
+          prompt.find("结尾必须称呼长官</game_profile>") != std::string::npos &&
+          prompt.find(std::string(5000, 'x')) == std::string::npos) {
         profiled_game_generation = true;
       }
     }
     return clean_classification && profiled_game_generation;
   }
-  bool game_generation_is_text_only() {
+  bool game_generation_uses_current_frame() {
     std::lock_guard lock(mutex_);
     for (const auto& [id, prompt] : prompts_) {
       if (id >= (std::uint64_t{1} << 63U) &&
           prompt.find("已经确认当前是 game") != std::string::npos &&
-          contexts_.contains(id) && !contexts_[id]) return true;
+          frame_contexts_.contains(id) && frame_contexts_[id] &&
+          audio_contexts_.contains(id) && !audio_contexts_[id] &&
+          max_output_tokens_.contains(id) && max_output_tokens_[id] == 192) {
+        return true;
+      }
     }
     return false;
   }
@@ -177,8 +196,11 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
  private:
   bool ready_{};
   std::unordered_map<std::uint64_t, bool> contexts_;
+  std::unordered_map<std::uint64_t, bool> frame_contexts_;
+  std::unordered_map<std::uint64_t, bool> audio_contexts_;
   std::unordered_map<std::uint64_t, bool> audible_contexts_;
   std::unordered_map<std::uint64_t, std::string> prompts_;
+  std::unordered_map<std::uint64_t, std::int32_t> max_output_tokens_;
   std::deque<jarvis::DuplexResult> duplex_results_;
   std::string duplex_instruction_;
   std::atomic_bool duplex_active_{false};
@@ -326,25 +348,57 @@ int main() {
   Worker worker(std::move(recording));
   std::mutex native_event_mutex;
   std::vector<std::string> native_events;
+  std::vector<std::string> perception_results;
   worker.set_completion([&](InferenceResult result) {
-    if (result.id != std::numeric_limits<std::uint64_t>::max()) return;
     std::lock_guard lock(native_event_mutex);
-    native_events.push_back(std::move(result.text));
+    if (result.id == std::numeric_limits<std::uint64_t>::max()) {
+      native_events.push_back(std::move(result.text));
+    } else if (result.id >= (std::uint64_t{1} << 63U)) {
+      perception_results.push_back(std::move(result.text));
+    }
   });
   require(worker.start("test"), "worker starts with recording runtime");
-  worker.set_game_profile("测试游戏", "关注生存资源");
+  std::string long_game_profile = "专业毒舌嘴臭教练，称呼我为“长官”。";
+  long_game_profile += std::string(5000, 'x');
+  long_game_profile += "结尾必须称呼长官";
+  worker.set_game_profile("任意测试游戏", std::move(long_game_profile));
   require(worker.start_monitoring(std::make_unique<TestDesktopCapture>(),
                                   std::make_unique<TestAudioCapture>(),
                                   std::chrono::milliseconds(10)),
           "monitoring starts with capture devices");
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
   require(recording_ptr->received_perception(), "monitoring schedules structured perception");
+  {
+    std::lock_guard lock(native_event_mutex);
+    require(std::ranges::any_of(perception_results, [](const auto& event) {
+              return event.find("\"barrage_pending\":true") != std::string::npos &&
+                     event.find("\"classification_recovered\":true") !=
+                         std::string::npos;
+            }),
+            "truncated game classification is recovered and emitted before generation");
+  }
+  bool fallback_emitted = false;
+  for (int attempt = 0; attempt < 500 && !fallback_emitted; ++attempt) {
+    {
+      std::lock_guard lock(native_event_mutex);
+      fallback_emitted = std::ranges::any_of(perception_results, [](const auto& event) {
+        return event.find("长官，游戏开了，脑子也请同步上线") !=
+                   std::string::npos &&
+               event.find("\"barrage_source\":\"fallback\"") !=
+                   std::string::npos &&
+               event.find("\"barrage_fallback_reason\":\"empty_candidates\"") !=
+                   std::string::npos;
+      });
+    }
+    if (!fallback_emitted) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  require(fallback_emitted, "empty game generation receives a fallback barrage");
   require(recording_ptr->received_audible_perception(),
           "structured perception receives audible system audio");
   require(recording_ptr->perception_request_count() == 2,
           "unchanged frames do not schedule repeated perception");
-  require(recording_ptr->game_generation_is_text_only(),
-          "game generation does not resend classification media");
+  require(recording_ptr->game_generation_uses_current_frame(),
+          "game generation reuses the current frame without resending audio");
   require(worker.start_duplex("traffic-light", "持续观察画面，绿灯亮起时提醒我"),
           "duplex task starts while monitoring remains active");
   std::this_thread::sleep_for(std::chrono::milliseconds(40));

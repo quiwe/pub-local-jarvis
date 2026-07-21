@@ -144,7 +144,11 @@ class OrchestrationService:
             if active_course
             else ""
         )
-        self.display_scene = CourseSceneStabilizer()
+        self.display_scene = CourseSceneStabilizer(
+            enter_samples=settings.scene.display_enter_samples,
+            exit_samples=settings.scene.display_exit_samples,
+            game_enter_samples=settings.scene.game_enter_samples,
+        )
         self._pending_course_results: deque[dict[str, Any]] = deque(
             maxlen=self.display_scene.enter_samples
         )
@@ -1058,28 +1062,59 @@ class OrchestrationService:
         scene_evidence = {
             key: evidence.get(key) is True
             for key in (
+                "game_surface",
                 "interactive_gameplay",
                 "game_video_or_stream",
+                "fullscreen_game_media",
                 "active_instruction",
                 "course_surface",
                 "instructional_audio",
                 "ordinary_browsing",
+                "non_game_surface",
             )
         }
+        barrage_pending = value.get("barrage_pending") is True
+        classification_recovered = value.get("classification_recovered") is True
+        barrage_source = str(value.get("barrage_source", "")).strip()
+        if barrage_source not in {
+            "pending",
+            "model",
+            "fallback",
+            "missing_generation",
+        }:
+            barrage_source = ""
+        barrage_fallback_reason = str(
+            value.get("barrage_fallback_reason", "")
+        ).strip()[:64]
         barrage = str(value.get("barrage", "")).strip()
         observation = str(value.get("observation", "")).strip()
         course_transcript = str(value.get("course_transcript", "")).strip()
         course_note = str(value.get("course_note", "")).strip()
         course_interaction = str(value.get("course_interaction", "")).strip()
         assistant_message = str(value.get("assistant_message", "")).strip()
+        game_surface = scene_evidence["game_surface"]
+        passive_game_media = scene_evidence["game_video_or_stream"]
+        fullscreen_game_media = scene_evidence["fullscreen_game_media"]
+        if (
+            scene == "other"
+            and confidence >= 0.72
+            and game_surface
+            and not scene_evidence["ordinary_browsing"]
+            and (not passive_game_media or fullscreen_game_media)
+        ):
+            scene = "game"
         if scene == "game":
             interactive = scene_evidence["interactive_gameplay"]
-            passive_game_media = scene_evidence["game_video_or_stream"]
             if not evidence and (
                 barrage or value.get("barrage_candidates") or assistant_message
             ):
                 interactive = True
-            if confidence < 0.78 or not interactive or passive_game_media:
+            valid_game_scene = (
+                interactive
+                or (game_surface and not passive_game_media)
+                or (passive_game_media and fullscreen_game_media)
+            )
+            if confidence < 0.72 or not valid_game_scene:
                 scene = "other"
         elif scene == "course":
             active_instruction = scene_evidence["active_instruction"]
@@ -1114,10 +1149,21 @@ class OrchestrationService:
             candidate_text = str(candidate).strip()[:30]
             if candidate_text and candidate_text not in barrage_candidates:
                 barrage_candidates.append(candidate_text)
+        if scene == "game" and not barrage_candidates and not barrage_pending:
+            barrage_source = "missing_generation"
+            barrage_fallback_reason = barrage_fallback_reason or "empty_candidates"
+        elif scene == "game" and barrage_pending:
+            barrage_source = "pending"
+        elif scene == "game" and barrage_candidates and not barrage_source:
+            barrage_source = "model"
         return {
             "scene": scene,
             "confidence": confidence,
             "scene_evidence": scene_evidence,
+            "barrage_pending": barrage_pending,
+            "classification_recovered": classification_recovered,
+            "barrage_source": barrage_source,
+            "barrage_fallback_reason": barrage_fallback_reason,
             "observation": observation[:300],
             "barrage": barrage[:30] if scene == "game" else "",
             "barrage_candidates": barrage_candidates[:4] if scene == "game" else [],
@@ -1142,12 +1188,15 @@ class OrchestrationService:
 
         evidence: dict[str, bool] = {}
         evidence_keys = (
+            "game_surface",
             "interactive_gameplay",
             "game_video_or_stream",
+            "fullscreen_game_media",
             "active_instruction",
             "course_surface",
             "instructional_audio",
             "ordinary_browsing",
+            "non_game_surface",
         )
         for key in evidence_keys:
             match = re.search(rf'"{key}"\s*:\s*(true|false)', source)
@@ -1156,7 +1205,12 @@ class OrchestrationService:
 
         scene = scene_match.group(1)
         required_evidence = {
-            "game": {"interactive_gameplay", "game_video_or_stream"},
+            "game": {
+                "game_surface",
+                "interactive_gameplay",
+                "game_video_or_stream",
+                "fullscreen_game_media",
+            },
             "course": {
                 "active_instruction",
                 "course_surface",
@@ -1200,9 +1254,21 @@ class OrchestrationService:
 
         scene = result["scene"]
         now = time.monotonic()
-        display_scene = self.display_scene.observe(scene)
+        uncertain_game_exit = (
+            self.display_scene.current == "game"
+            and scene == "other"
+            and not result["scene_evidence"]["non_game_surface"]
+            and not result["scene_evidence"]["ordinary_browsing"]
+        )
+        exit_samples = (
+            self.settings.scene.game_uncertain_exit_samples
+            if uncertain_game_exit
+            else None
+        )
+        display_scene = self.display_scene.observe(scene, exit_samples=exit_samples)
         result["observed_scene"] = scene
         result["scene"] = display_scene
+        result["uncertain_game_exit"] = uncertain_game_exit
         barrage_history_seconds = max(
             self.settings.interaction.game_barrage_repeat_seconds,
             self.settings.interaction.game_barrage_similar_seconds,
@@ -1249,7 +1315,12 @@ class OrchestrationService:
             await self.events.publish(
                 Event(
                     "barrage.generated",
-                    {"text": result["barrage"], "confidence": result["confidence"]},
+                    {
+                        "text": result["barrage"],
+                        "confidence": result["confidence"],
+                        "source": result["barrage_source"],
+                        "fallback_reason": result["barrage_fallback_reason"],
+                    },
                 )
             )
 

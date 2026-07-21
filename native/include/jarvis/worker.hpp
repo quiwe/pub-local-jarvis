@@ -71,6 +71,7 @@ class Worker {
   std::atomic_uint64_t duplex_sequence_{0};
   std::string duplex_session_id_{};
   std::deque<RecentPerception> recent_perceptions_{};
+  std::string pending_game_fallback_{};
   std::string game_profile_name_{};
   std::string game_profile_prompt_{};
   std::size_t game_barrage_angle_index_{};

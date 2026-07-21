@@ -17,6 +17,7 @@ struct InferenceRequest {
   std::string prompt{};
   std::shared_ptr<const VideoFrame> frame{};
   std::shared_ptr<const std::vector<float>> audio_16khz_mono{};
+  std::int32_t max_output_tokens{};
 };
 
 struct InferenceResult {

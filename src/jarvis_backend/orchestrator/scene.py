@@ -42,11 +42,23 @@ class SceneHysteresis:
 class CourseSceneStabilizer:
     """Requires consistent evidence before entering or switching special scenes."""
 
-    def __init__(self, enter_samples: int = 2, exit_samples: int = 2) -> None:
-        if enter_samples < 1 or exit_samples < 1:
+    def __init__(
+        self,
+        enter_samples: int = 2,
+        exit_samples: int = 2,
+        game_enter_samples: int | None = None,
+    ) -> None:
+        if (
+            enter_samples < 1
+            or exit_samples < 1
+            or (game_enter_samples is not None and game_enter_samples < 1)
+        ):
             raise ValueError("sample counts must be positive")
         self.enter_samples = enter_samples
         self.exit_samples = exit_samples
+        self.game_enter_samples = (
+            enter_samples if game_enter_samples is None else game_enter_samples
+        )
         self.current = "other"
         self._candidate: str | None = None
         self._streak = 0
@@ -56,7 +68,9 @@ class CourseSceneStabilizer:
         self._candidate = None
         self._streak = 0
 
-    def observe(self, scene: str) -> str:
+    def observe(self, scene: str, *, exit_samples: int | None = None) -> str:
+        if exit_samples is not None and exit_samples < 1:
+            raise ValueError("exit_samples must be positive")
         if scene not in {"game", "course", "other"}:
             scene = "other"
         if scene == self.current:
@@ -65,7 +79,10 @@ class CourseSceneStabilizer:
 
         self._streak = self._streak + 1 if self._candidate == scene else 1
         self._candidate = scene
-        needed = self.enter_samples if self.current == "other" else self.exit_samples
+        if self.current == "other":
+            needed = self.game_enter_samples if scene == "game" else self.enter_samples
+        else:
+            needed = self.exit_samples if exit_samples is None else exit_samples
         if self._streak >= needed:
             self.force(scene)
         return self.current

@@ -26,6 +26,7 @@ namespace jarvis {
 namespace {
 
 namespace fs = std::filesystem;
+constexpr std::int32_t kDefaultMaxOutputTokens = 1024;
 
 std::string path_string(const fs::path& path) {
   return path.string();
@@ -219,6 +220,10 @@ class RealOmniRuntime final : public IOmniRuntime {
                                       const std::atomic_bool& cancel) override {
     if (!ready_ || context_ == nullptr) throw std::runtime_error("MiniCPM-o is not loaded");
     if (cancel.load()) return {request.id, {}, true};
+
+    params_.n_predict = request.max_output_tokens > 0
+                            ? std::clamp(request.max_output_tokens, 32, 1024)
+                            : kDefaultMaxOutputTokens;
 
     TemporaryMedia media;
     std::string image_path;
