@@ -38,7 +38,11 @@ function normalizeProfile(value, builtIn = false) {
 }
 
 function defaultSettings() {
-  return { selectedId: "minecraft", profiles: builtInProfiles.map(item => ({ ...item })) };
+  return {
+    selectedId: "minecraft",
+    profiles: builtInProfiles.map(item => ({ ...item })),
+    deletedBuiltInIds: [],
+  };
 }
 
 function loadSettings(filePath) {
@@ -49,19 +53,54 @@ function loadSettings(filePath) {
   const custom = Array.isArray(saved.profiles)
     ? saved.profiles.map(item => normalizeProfile(item, builtInIds.has(item?.id))).filter(Boolean)
     : [];
+  const deletedBuiltInIds = new Set(
+    Array.isArray(saved.deletedBuiltInIds)
+      ? saved.deletedBuiltInIds.filter(id => builtInIds.has(id))
+      : [],
+  );
   const profiles = [
-    ...builtInProfiles.map(profile => custom.find(item => item.id === profile.id) || { ...profile }),
+    ...builtInProfiles
+      .filter(profile => !deletedBuiltInIds.has(profile.id))
+      .map(profile => custom.find(item => item.id === profile.id) || { ...profile }),
     ...custom.filter(item => !builtInIds.has(item.id)),
   ];
-  const selectedId = profiles.some(item => item.id === saved.selectedId) ? saved.selectedId : "minecraft";
-  return { selectedId, profiles };
+  if (!profiles.length) {
+    profiles.push({ ...builtInProfiles[0] });
+    deletedBuiltInIds.delete(builtInProfiles[0].id);
+  }
+  const selectedId = profiles.some(item => item.id === saved.selectedId)
+    ? saved.selectedId
+    : profiles[0].id;
+  return { selectedId, profiles, deletedBuiltInIds: [...deletedBuiltInIds] };
 }
 
 function saveSettings(filePath, settings) {
   const profiles = settings.profiles
     .map(item => normalizeProfile(item, builtInIds.has(item.id)))
     .filter(Boolean);
-  fs.writeFileSync(filePath, JSON.stringify({ selectedId: settings.selectedId, profiles }, null, 2), "utf8");
+  const deletedBuiltInIds = Array.isArray(settings.deletedBuiltInIds)
+    ? settings.deletedBuiltInIds.filter(id => builtInIds.has(id))
+    : [];
+  fs.writeFileSync(
+    filePath,
+    JSON.stringify({ selectedId: settings.selectedId, profiles, deletedBuiltInIds }, null, 2),
+    "utf8",
+  );
+}
+
+function removeProfile(settings, id) {
+  const profile = settings.profiles.find(item => item.id === id);
+  if (!profile) throw new Error("游戏陪伴方案不存在");
+  if (settings.profiles.length <= 1) throw new Error("至少保留一个游戏陪伴方案");
+  const deletedBuiltInIds = new Set(settings.deletedBuiltInIds || []);
+  if (builtInIds.has(profile.id)) deletedBuiltInIds.add(profile.id);
+  const profiles = settings.profiles.filter(item => item.id !== id);
+  return {
+    ...settings,
+    profiles,
+    selectedId: settings.selectedId === id ? profiles[0].id : settings.selectedId,
+    deletedBuiltInIds: [...deletedBuiltInIds],
+  };
 }
 
 module.exports = {
@@ -71,5 +110,6 @@ module.exports = {
   defaultSettings,
   loadSettings,
   normalizeProfile,
+  removeProfile,
   saveSettings,
 };

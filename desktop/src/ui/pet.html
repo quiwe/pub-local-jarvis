@@ -14,22 +14,12 @@
     <button id="bubble-action" type="button" hidden>打开课程总结</button>
   </div>
 
-  <div id="pet" class="pet interactive" data-scene="other" aria-label="AI 贾维斯桌宠">
-    <div class="antenna"><i></i></div>
-    <div class="ear left"></div><div class="ear right"></div>
-    <div class="head">
-      <div class="brow left"></div><div class="brow right"></div>
-      <div class="eye left"><i></i></div><div class="eye right"><i></i></div>
-      <div class="mouth"><span></span><span></span><span></span></div>
-    </div>
-    <div class="neck"></div>
-    <div class="body-core">
-      <button id="privacy-toggle" class="core-ring" type="button"
-        title="双击屏蔽或恢复画面" aria-label="双击屏蔽或恢复画面"><span>J</span></button>
-      <i class="status-light one"></i><i class="status-light two"></i>
-    </div>
-    <div class="shadow"></div>
+  <div id="pet" class="pet interactive" data-scene="other" data-state="idle" aria-label="AI Jarvis 桌宠">
+    <img id="pet-animation" class="pet-animation" alt="" draggable="false">
+    <button id="privacy-toggle" class="privacy-toggle" type="button"
+      title="双击暂停或恢复画面感知" aria-label="双击暂停或恢复画面感知"></button>
   </div>
+  <script src="../pet-state.js"></script>
   <script src="pet.js"></script>
 </body>
 </html>

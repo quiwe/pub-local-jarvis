@@ -9,6 +9,7 @@ const {
   OVERCOOKED_PROMPT,
   PLANTS_VS_ZOMBIES_PROMPT,
   loadSettings,
+  removeProfile,
   saveSettings,
 } = require("../src/game-profiles");
 
@@ -49,4 +50,27 @@ test("new built-in profiles are added to settings saved by older versions", () =
   assert.deepEqual(loaded.profiles.map(profile => profile.id), ["minecraft", "plants-vs-zombies", "overcooked"]);
   assert.equal(loaded.profiles[0].prompt, "保留旧提示词");
   fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test("deleted built-in profiles stay deleted after restart", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-game-profiles-"));
+  const file = path.join(directory, "profiles.json");
+  let settings = loadSettings(file);
+  settings = removeProfile(settings, "minecraft");
+  saveSettings(file, settings);
+
+  const loaded = loadSettings(file);
+  assert.equal(loaded.profiles.some(profile => profile.id === "minecraft"), false);
+  assert.equal(loaded.selectedId, "plants-vs-zombies");
+  assert.deepEqual(loaded.deletedBuiltInIds, ["minecraft"]);
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test("profile deletion keeps one runnable game profile", () => {
+  const settings = {
+    selectedId: "custom-only",
+    profiles: [{ id: "custom-only", name: "唯一方案", prompt: "继续陪伴游戏", builtIn: false }],
+    deletedBuiltInIds: ["minecraft", "plants-vs-zombies", "overcooked"],
+  };
+  assert.throws(() => removeProfile(settings, "custom-only"), /至少保留一个/);
 });

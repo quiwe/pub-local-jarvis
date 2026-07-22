@@ -412,7 +412,9 @@ function renderProfileDraft(id) {
   profileSelect.value = profile.id;
   profileName.value = profile.name;
   profilePrompt.value = profile.prompt;
-  profileDelete.disabled = profile.builtIn;
+  profileDelete.disabled = gameProfiles.length <= 1;
+  profileDelete.title = profileDelete.disabled ? "至少保留一个方案" : "删除方案";
+  profileDelete.setAttribute("aria-label", profileDelete.title);
   updateProfilePromptCount();
   setProfileDirty(false);
   refreshIcons();
@@ -458,7 +460,7 @@ $("#profile-add").addEventListener("click", () => {
 });
 profileDelete.addEventListener("click", async () => {
   const profile = gameProfiles.find(item => item.id === profileSelect.value);
-  if (!profile || profile.builtIn || !window.confirm(`删除“${profile.name}”方案？`)) return;
+  if (!profile || gameProfiles.length <= 1 || !window.confirm(`删除“${profile.name}”方案？`)) return;
   if (!persistedProfileIds.has(profile.id)) {
     gameProfiles = gameProfiles.filter(item => item.id !== profile.id);
     renderProfileEditor({ selectedId: gameProfiles[0].id, profiles: gameProfiles }, false);

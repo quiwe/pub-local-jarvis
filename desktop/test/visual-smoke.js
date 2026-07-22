@@ -208,18 +208,33 @@ app.whenReady().then(async () => {
       await new Promise(resolve => setTimeout(resolve, 150));
       const state = await window.webContents.executeJavaScript(`(() => {
         const select = document.querySelector('#profile-select');
+        const builtInDeleteEnabled = !document.querySelector('#profile-delete').disabled;
         select.value = 'custom-demo';
         select.dispatchEvent(new Event('change'));
         const bounds = document.querySelector('#game-profile-dialog').getBoundingClientRect();
         return {
           visible: document.querySelector('#game-profile-dialog').open,
+          builtInDeleteEnabled,
           name: document.querySelector('#profile-name').value,
           count: document.querySelector('#profile-prompt-count').textContent,
           inViewport: bounds.top >= 0 && bounds.bottom <= innerHeight,
         };
       })()`);
-      if (!state.visible || !state.inViewport || state.name !== "星际探索" || !state.count.includes("13 / 8000")) {
+      if (!state.visible || !state.inViewport || !state.builtInDeleteEnabled || state.name !== "星际探索" || !state.count.includes("13 / 8000")) {
         throw new Error(`game profile editor failed: ${JSON.stringify(state)}`);
+      }
+    }
+  );
+  await capture(
+    "pet-idle",
+    { width: 390, height: 300, backgroundColor: "#d8dfdd" },
+    "pet.html",
+    async window => {
+      const state = await window.webContents.executeJavaScript(
+        "({ state: document.querySelector('#pet').dataset.state, loaded: document.querySelector('#pet-animation').complete && document.querySelector('#pet-animation').naturalWidth > 0 })"
+      );
+      if (state.state !== "idle" || !state.loaded) {
+        throw new Error(`pet idle rendering failed: ${JSON.stringify(state)}`);
       }
     }
   );
@@ -237,9 +252,70 @@ app.whenReady().then(async () => {
       });
       await new Promise(resolve => setTimeout(resolve, 700));
       const state = await window.webContents.executeJavaScript(
-        "({ api: typeof window.jarvis, hidden: document.querySelector('#bubble').hidden })"
+        "({ api: typeof window.jarvis, hidden: document.querySelector('#bubble').hidden, petState: document.querySelector('#pet').dataset.state })"
       );
-      if (state.api !== "object" || state.hidden) throw new Error("pet IPC rendering failed");
+      if (state.api !== "object" || state.hidden || state.petState !== "closed") {
+        throw new Error(`pet IPC rendering failed: ${JSON.stringify(state)}`);
+      }
+    }
+  );
+  await capture(
+    "pet-normal",
+    { width: 390, height: 300, backgroundColor: "#d8dfdd" },
+    "pet.html",
+    async window => {
+      const initial = await window.webContents.executeJavaScript(
+        "({ state: document.querySelector('#pet').dataset.state, src: document.querySelector('#pet-animation').src })"
+      );
+      window.webContents.send("jarvis:bubble", { text: "我来帮你看看。", tone: "info" });
+      await new Promise(resolve => setTimeout(resolve, 80));
+      const firstBubble = await window.webContents.executeJavaScript(
+        "({ state: document.querySelector('#pet').dataset.state, src: document.querySelector('#pet-animation').src })"
+      );
+      window.webContents.send("jarvis:bubble", null);
+      await new Promise(resolve => setTimeout(resolve, 80));
+      const afterBubble = await window.webContents.executeJavaScript(
+        "({ state: document.querySelector('#pet').dataset.state, src: document.querySelector('#pet-animation').src })"
+      );
+      window.webContents.send("jarvis:bubble", { text: "第二条消息会重新播放普通动画。", tone: "info" });
+      await new Promise(resolve => setTimeout(resolve, 80));
+      const secondBubble = await window.webContents.executeJavaScript(
+        "({ state: document.querySelector('#pet').dataset.state, src: document.querySelector('#pet-animation').src })"
+      );
+      if (
+        initial.state !== "idle" ||
+        firstBubble.state !== "normal" ||
+        afterBubble.state !== "idle" ||
+        secondBubble.state !== "normal" ||
+        firstBubble.src === secondBubble.src
+      ) {
+        throw new Error(`pet normal replay failed: ${JSON.stringify({ initial, firstBubble, afterBubble, secondBubble })}`);
+      }
+    }
+  );
+  await capture(
+    "pet-course",
+    { width: 390, height: 300, backgroundColor: "#d8dfdd" },
+    "pet.html",
+    async window => {
+      window.webContents.send("jarvis:pet-scene", "course");
+      await new Promise(resolve => setTimeout(resolve, 80));
+      const course = await window.webContents.executeJavaScript(
+        "document.querySelector('#pet').dataset.state"
+      );
+      window.webContents.send("jarvis:bubble", { text: "课程中的临时提示。", tone: "course" });
+      await new Promise(resolve => setTimeout(resolve, 80));
+      const bubbleState = await window.webContents.executeJavaScript(
+        "document.querySelector('#pet').dataset.state"
+      );
+      window.webContents.send("jarvis:bubble", null);
+      await new Promise(resolve => setTimeout(resolve, 80));
+      const restored = await window.webContents.executeJavaScript(
+        "document.querySelector('#pet').dataset.state"
+      );
+      if (course !== "course" || bubbleState !== "normal" || restored !== "course") {
+        throw new Error(`pet course transitions failed: ${JSON.stringify({ course, bubbleState, restored })}`);
+      }
     }
   );
   await capture(

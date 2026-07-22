@@ -20,7 +20,13 @@ const { displayForWindow, sourceForDisplay } = require("./pet-display");
 const { isPetPointerInteractive } = require("./pet-hit-test");
 const { randomPrivacyDelay, randomPrivacyMessage } = require("./privacy-mode");
 const { resolveDisplayScene } = require("./scene-policy");
-const { defaultSettings, loadSettings, normalizeProfile, saveSettings } = require("./game-profiles");
+const {
+  defaultSettings,
+  loadSettings,
+  normalizeProfile,
+  removeProfile,
+  saveSettings,
+} = require("./game-profiles");
 const {
   loadSettings: loadImageSettings,
   normalizeSettings: normalizeImageSettings,
@@ -524,10 +530,7 @@ function registerIpc() {
     return syncGameProfile();
   });
   ipcMain.handle("jarvis:delete-game-profile", async (_event, id) => {
-    const profile = gameSettings.profiles.find(item => item.id === id);
-    if (!profile || profile.builtIn) throw new Error("内置方案不能删除");
-    gameSettings.profiles = gameSettings.profiles.filter(item => item.id !== id);
-    if (gameSettings.selectedId === id) gameSettings.selectedId = "minecraft";
+    gameSettings = removeProfile(gameSettings, id);
     persistGameSettings();
     return syncGameProfile();
   });
