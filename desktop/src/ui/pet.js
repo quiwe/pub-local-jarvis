@@ -25,7 +25,6 @@ const petContext = {
 let dragPointerId = null;
 let dragOrigin = null;
 let dragging = false;
-let privacyTogglePending = false;
 
 function syncPetAnimation({ replayNormal = false } = {}) {
   const nextState = resolvePetState(petContext);
@@ -44,8 +43,6 @@ function setScreenPrivacy(enabled) {
 
 privacyToggle.addEventListener("dblclick", async event => {
   event.preventDefault();
-  if (privacyTogglePending) return;
-  privacyTogglePending = true;
   const previous = petContext.screenBlocked;
   setScreenPrivacy(!previous);
   try {
@@ -56,8 +53,6 @@ privacyToggle.addEventListener("dblclick", async event => {
   } catch (_) {
     setScreenPrivacy(previous);
     // The main window reports backend command failures through its normal status path.
-  } finally {
-    privacyTogglePending = false;
   }
 });
 

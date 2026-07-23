@@ -38,7 +38,7 @@ def create_app(
 
     application = FastAPI(
         title=config.name,
-        version="0.1.0",
+        version="0.1.2",
         description="Local-first control plane for AI Jarvis workers and clients.",
         lifespan=lifespan,
         docs_url=None,

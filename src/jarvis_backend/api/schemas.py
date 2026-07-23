@@ -12,7 +12,8 @@ class HealthResponse(BaseModel):
     status: Literal["ok", "degraded"]
     lifecycle: LifecycleState
     native_connected: bool
-    version: str = "0.1.0"
+    inference_backend: Literal["cuda", "cpu", "unknown"] = "unknown"
+    version: str = "0.1.2"
 
 
 class CommandRequest(BaseModel):

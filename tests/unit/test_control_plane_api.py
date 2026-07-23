@@ -1111,6 +1111,88 @@ def test_monitoring_automatically_manages_ambient_duplex(tmp_path):
         ]
 
 
+async def test_pet_chat_pauses_and_resumes_ambient_duplex(tmp_path, monkeypatch):
+    settings = Settings(
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(sessions_root=tmp_path / "sessions"),
+    )
+    orchestrator = create_app(settings=settings).state.orchestrator
+    await orchestrator.start()
+    orchestrator._monitoring_requested = True
+    orchestrator._duplex_session_id = "jarvis-ambient"
+    orchestrator._duplex_instruction = service_module.AMBIENT_DUPLEX_INSTRUCTION
+    requests = []
+    resume_entered = asyncio.Event()
+    resume_release = asyncio.Event()
+
+    async def request(method, payload):
+        requests.append((method, payload))
+        if method == "ask":
+            return {"text": "GPU reply"}
+        if method == "start_duplex":
+            resume_entered.set()
+            await resume_release.wait()
+        return {"ok": True}
+
+    monkeypatch.setattr(orchestrator.native_client, "request", request)
+    try:
+        assert await orchestrator.pet_chat("hello") == "GPU reply"
+        await asyncio.wait_for(resume_entered.wait(), timeout=0.2)
+        assert [method for method, _ in requests[:3]] == [
+            "stop_duplex",
+            "ask",
+            "start_duplex",
+        ]
+        assert requests[1][1]["_timeout_seconds"] == 600.0
+        resume_task = orchestrator._ambient_duplex_task
+        assert resume_task is not None
+        resume_release.set()
+        await asyncio.wait_for(resume_task, timeout=0.2)
+        assert orchestrator.duplex_status()["session_id"] == "jarvis-ambient"
+    finally:
+        resume_release.set()
+        await orchestrator.stop()
+
+
+async def test_pet_chat_does_not_resume_ambient_after_monitoring_stops(
+    tmp_path, monkeypatch
+):
+    settings = Settings(
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(sessions_root=tmp_path / "sessions"),
+    )
+    orchestrator = create_app(settings=settings).state.orchestrator
+    await orchestrator.start()
+    orchestrator._monitoring_requested = True
+    orchestrator._duplex_session_id = "jarvis-ambient"
+    orchestrator._duplex_instruction = service_module.AMBIENT_DUPLEX_INSTRUCTION
+    requests = []
+    ask_entered = asyncio.Event()
+    ask_release = asyncio.Event()
+
+    async def request(method, payload):
+        requests.append((method, payload))
+        if method == "ask":
+            ask_entered.set()
+            await ask_release.wait()
+            return {"text": "reply after stop"}
+        return {"ok": True}
+
+    monkeypatch.setattr(orchestrator.native_client, "request", request)
+    try:
+        chat_task = asyncio.create_task(orchestrator.pet_chat("hello"))
+        await asyncio.wait_for(ask_entered.wait(), timeout=0.2)
+        orchestrator._monitoring_requested = False
+        ask_release.set()
+        assert await asyncio.wait_for(chat_task, timeout=0.2) == "reply after stop"
+        await asyncio.sleep(0)
+        assert [method for method, _ in requests] == ["stop_duplex", "ask"]
+        assert orchestrator._ambient_duplex_task is None
+    finally:
+        ask_release.set()
+        await orchestrator.stop()
+
+
 async def test_monitoring_returns_before_ambient_duplex_is_ready(tmp_path, monkeypatch):
     settings = Settings(
         memory=MemorySettings(root=tmp_path / "memory"),

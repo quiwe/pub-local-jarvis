@@ -1,13 +1,16 @@
 "use strict";
 
 const { EventEmitter } = require("node:events");
+const { randomUUID } = require("node:crypto");
+const net = require("node:net");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
-const { StringDecoder } = require("node:string_decoder");
 const WebSocket = require("ws");
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const PROGRESS_PREFIX = "JARVIS_PROGRESS ";
+const DEFAULT_PACKAGED_PORT = 31847;
+const PET_CHAT_TIMEOUT_MS = 10 * 60 * 1000 + 15 * 1000;
 
 function parseBackendOutputLine(line) {
   const cleaned = line.replace(/\x1b\[[0-9;]*m/g, "").trim();
@@ -18,38 +21,84 @@ function parseBackendOutputLine(line) {
     if (payload?.type === "download-progress" && Number.isFinite(payload.percent)) {
       return { ...payload, percent: Math.max(0, Math.min(100, payload.percent)) };
     }
+    if (
+      payload?.type === "runtime-backend"
+      && ["cuda", "cpu"].includes(payload.backend)
+      && typeof payload.message === "string"
+    ) {
+      return payload;
+    }
   } catch (_) {}
   return null;
 }
 
 function createBackendOutputForwarder(onMessage) {
-  const decoder = new StringDecoder("utf8");
-  let buffered = "";
+  const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+  const gb18030Decoder = new TextDecoder("gb18030");
+  let buffered = Buffer.alloc(0);
+
+  const decode = bytes => {
+    try {
+      return utf8Decoder.decode(bytes);
+    } catch (_) {
+      return gb18030Decoder.decode(bytes);
+    }
+  };
+
+  const forward = bytes => {
+    if (!bytes.length) return;
+    const value = parseBackendOutputLine(decode(bytes));
+    if (value) onMessage(value);
+  };
 
   const drain = flush => {
-    const lines = buffered.split(/\r\n|\n|\r/);
-    const tail = lines.pop() || "";
-    buffered = flush ? "" : tail;
-    for (const line of lines) {
-      const value = parseBackendOutputLine(line);
-      if (value) onMessage(value);
+    let lineStart = 0;
+    for (let index = 0; index < buffered.length; index += 1) {
+      if (buffered[index] !== 10 && buffered[index] !== 13) continue;
+      forward(buffered.subarray(lineStart, index));
+      if (buffered[index] === 13 && buffered[index + 1] === 10) index += 1;
+      lineStart = index + 1;
     }
-    if (flush && tail) {
-      const value = parseBackendOutputLine(tail);
-      if (value) onMessage(value);
+    if (flush) {
+      forward(buffered.subarray(lineStart));
+      buffered = Buffer.alloc(0);
+    } else if (lineStart > 0) {
+      buffered = buffered.subarray(lineStart);
     }
   };
 
   return {
     write(chunk) {
-      buffered += decoder.write(chunk);
+      buffered = Buffer.concat([buffered, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
       drain(false);
     },
     end() {
-      buffered += decoder.end();
       drain(true);
     },
   };
+}
+
+function probePort(port, host = "127.0.0.1") {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen({ host, port, exclusive: true }, () => {
+      const selectedPort = server.address().port;
+      server.close(error => (error ? reject(error) : resolve(selectedPort)));
+    });
+  });
+}
+
+async function selectAvailablePort(preferredPort = DEFAULT_PACKAGED_PORT) {
+  for (let offset = 0; offset < 20 && preferredPort + offset <= 65535; offset += 1) {
+    try {
+      return await probePort(preferredPort + offset);
+    } catch (error) {
+      if (error.code !== "EADDRINUSE" && error.code !== "EACCES") throw error;
+    }
+  }
+  return probePort(0);
 }
 
 class StartCancelledError extends Error {
@@ -93,12 +142,19 @@ function backendLaunchSpec(backendRoot, useFake, packaged = false) {
 class BackendManager extends EventEmitter {
   constructor(options = {}) {
     super();
-    this.baseUrl = options.baseUrl || "http://127.0.0.1:8000";
     this.backendRoot = options.backendRoot;
     this.dataRoot = options.dataRoot;
     this.packaged = options.packaged === true;
     this.useFake = options.useFake === true;
+    this.preferredPort = options.preferredPort || DEFAULT_PACKAGED_PORT;
+    this.baseUrl = options.baseUrl || `http://127.0.0.1:${this.packaged ? this.preferredPort : 8000}`;
+    this.portSelector = options.portSelector || selectAvailablePort;
+    this.pipeNameFactory = options.pipeNameFactory || (() => (
+      `\\\\.\\pipe\\AIJarvis.Worker.${process.pid}.${randomUUID()}`
+    ));
+    this.pipeName = null;
     this.child = null;
+    this.childError = null;
     this.ownsBackend = false;
     this.socket = null;
     this.reconnectTimer = null;
@@ -157,12 +213,20 @@ class BackendManager extends EventEmitter {
       await this.waitForEventConnection(signal);
       return { owned: false };
     }
+    if (this.packaged) {
+      const port = await this.portSelector(this.preferredPort);
+      throwIfCancelled(signal);
+      this.baseUrl = `http://127.0.0.1:${port}`;
+      this.pipeName = this.pipeNameFactory();
+      this.emit("progress", `正在使用本地服务端口 ${port}`);
+    }
     this.emit("progress", this.useFake ? "正在启动开发后端" : "正在检查本地模型与运行时");
     throwIfCancelled(signal);
     this.spawnBackend();
     const deadline = Date.now() + 15 * 60 * 1000;
     while (Date.now() < deadline) {
       throwIfCancelled(signal);
+      if (this.childError) throw this.childError;
       if (this.child && this.child.exitCode !== null) {
         throw new Error(`后端启动进程已退出，代码 ${this.child.exitCode}`);
       }
@@ -215,6 +279,8 @@ class BackendManager extends EventEmitter {
       this.useFake,
       this.packaged,
     );
+    this.childError = null;
+    const serverPort = new URL(this.baseUrl).port;
     this.child = spawn(executable, args, {
       cwd: this.backendRoot,
       windowsHide: true,
@@ -225,6 +291,7 @@ class BackendManager extends EventEmitter {
         PYTHONUNBUFFERED: "1",
         PYTHONUTF8: "1",
         ...(this.dataRoot ? { JARVIS_DATA_ROOT: this.dataRoot } : {}),
+        ...(this.packaged ? { JARVIS_SERVER_PORT: serverPort, JARVIS_PIPE_NAME: this.pipeName } : {}),
       },
     });
     for (const stream of [this.child.stdout, this.child.stderr]) {
@@ -232,7 +299,10 @@ class BackendManager extends EventEmitter {
       stream.on("data", chunk => forwarder.write(chunk));
       stream.on("end", () => forwarder.end());
     }
-    this.child.on("error", error => this.emit("error", error));
+    this.child.on("error", error => {
+      this.childError = error;
+      this.emit("error", error);
+    });
   }
 
   connectEvents() {
@@ -268,7 +338,7 @@ class BackendManager extends EventEmitter {
     return this.request("/api/v1/assistant/chat", {
       method: "POST",
       body: JSON.stringify({ message }),
-      timeout: 3 * 60 * 1000,
+      timeout: PET_CHAT_TIMEOUT_MS,
     });
   }
 
@@ -337,4 +407,5 @@ module.exports = {
   backendLaunchSpec,
   createBackendOutputForwarder,
   parseBackendOutputLine,
+  selectAvailablePort,
 };

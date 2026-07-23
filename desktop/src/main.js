@@ -1,5 +1,6 @@
 "use strict";
 
+const fs = require("node:fs");
 const path = require("node:path");
 const {
   app,
@@ -37,6 +38,9 @@ const {
 } = require("./image-generation-settings");
 
 app.setName("AI Jarvis");
+if (process.env.JARVIS_ELECTRON_USER_DATA_ROOT) {
+  app.setPath("userData", path.resolve(process.env.JARVIS_ELECTRON_USER_DATA_ROOT));
+}
 app.commandLine.appendSwitch("disable-background-timer-throttling");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) app.exit(0);
@@ -49,6 +53,8 @@ let manager = null;
 let startPromise = null;
 let startController = null;
 let privacyTogglePromise = null;
+let privacyDesiredVersion = 0;
+let privacyAppliedVersion = 0;
 let quitting = false;
 let bubbleTimer = null;
 let privacyMessageTimer = null;
@@ -71,6 +77,8 @@ const state = {
   scene: "other",
   error: null,
   environmentStatus: "idle",
+  inferenceBackend: "unknown",
+  inferenceReason: "",
   screenBlocked: false,
   gameProfile: "我的世界",
 };
@@ -112,6 +120,7 @@ function backendRoot() {
 }
 
 function backendDataRoot() {
+  if (process.env.JARVIS_DATA_ROOT) return path.resolve(process.env.JARVIS_DATA_ROOT);
   const localAppData = process.env.LOCALAPPDATA;
   return localAppData
     ? path.join(localAppData, "AIJarvis")
@@ -124,6 +133,11 @@ function send(window, channel, payload) {
 
 function publishState(patch = {}) {
   Object.assign(state, patch);
+  if (process.env.JARVIS_STATE_FILE) {
+    const statePath = path.resolve(process.env.JARVIS_STATE_FILE);
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
+  }
   send(launcherWindow, "jarvis:state", { ...state });
   updateTrayMenu();
 }
@@ -449,26 +463,40 @@ function applyScreenPrivacy(screenBlocked, announce = true) {
   }
 }
 
-async function toggleScreenPrivacy() {
+function reconcileScreenPrivacy() {
   if (privacyTogglePromise) return privacyTogglePromise;
-  if (state.phase !== "running") return { ...state };
   privacyTogglePromise = (async () => {
-    const previous = state.screenBlocked;
-    const screenBlocked = !state.screenBlocked;
-    applyScreenPrivacy(screenBlocked);
-    try {
-      await manager.command(screenBlocked ? "pause_monitoring" : "resume_monitoring");
-    } catch (error) {
-      applyScreenPrivacy(previous, false);
-      throw error;
+    while (privacyAppliedVersion !== privacyDesiredVersion) {
+      const version = privacyDesiredVersion;
+      const screenBlocked = state.screenBlocked;
+      try {
+        await manager.command(screenBlocked ? "pause_monitoring" : "resume_monitoring");
+        privacyAppliedVersion = version;
+      } catch (error) {
+        if (version === privacyDesiredVersion) {
+          applyScreenPrivacy(!screenBlocked, false);
+          privacyAppliedVersion = version;
+          publishState({ error: error.message });
+          showBubble({ text: `画面感知切换失败：${error.message}`, tone: "error", duration: 8000 });
+        }
+        throw error;
+      }
     }
-    return { ...state };
-  })();
-  try {
-    return await privacyTogglePromise;
-  } finally {
+  })().finally(() => {
     privacyTogglePromise = null;
-  }
+    if (privacyAppliedVersion !== privacyDesiredVersion) {
+      reconcileScreenPrivacy().catch(() => {});
+    }
+  });
+  return privacyTogglePromise;
+}
+
+function toggleScreenPrivacy() {
+  if (state.phase !== "running") return { ...state };
+  applyScreenPrivacy(!state.screenBlocked);
+  privacyDesiredVersion += 1;
+  reconcileScreenPrivacy().catch(() => {});
+  return { ...state };
 }
 
 function handleBackendEvent(event) {
@@ -477,8 +505,17 @@ function handleBackendEvent(event) {
     publishState({ environmentStatus: "initializing" });
     send(launcherWindow, "jarvis:progress", "正在初始化环境感知模型");
   } else if (event?.topic === "duplex.task.started") {
-    publishState({ environmentStatus: "ready", error: null });
+    publishState({ phase: "running", monitoring: true, environmentStatus: "ready", error: null });
     send(launcherWindow, "jarvis:progress", "环境感知已就绪");
+    if (state.inferenceBackend === "cpu") {
+      showBubble({
+        text: "当前模型正在使用 CPU，推理体验会明显下降。",
+        tone: "warning",
+        duration: 12000,
+      });
+    } else {
+      showBubble({ text: "环境感知已就绪，CUDA 加速正在运行。", tone: "success" });
+    }
     if (state.phase === "running") setTimeout(() => launcherWindow.hide(), 900);
   } else if (event?.topic === "duplex.task.failed") {
     const message = payload.error || "环境感知模型初始化失败，请查看运行日志后重试";
@@ -536,15 +573,22 @@ async function startJarvis() {
   if (startPromise) return startPromise;
   startPromise = (async () => {
     startController = new AbortController();
-    publishState({ phase: "starting", environmentStatus: "initializing", error: null });
+    publishState({
+      phase: "starting",
+      environmentStatus: "initializing",
+      inferenceBackend: "unknown",
+      inferenceReason: "",
+      error: null,
+    });
     try {
       await manager.start({ signal: startController.signal });
       await syncGameProfile({ timeout: 3 * 60 * 1000 });
       await manager.command("start_monitoring", {}, { timeout: 3 * 60 * 1000 });
+      privacyDesiredVersion = 0;
+      privacyAppliedVersion = 0;
       publishState({ phase: "running", monitoring: true, screenBlocked: false, error: null });
       setScene("other");
-      showBubble({ text: "基础监控已启动，正在初始化环境感知模型。", tone: "success" });
-      if (state.environmentStatus === "ready") setTimeout(() => launcherWindow.hide(), 900);
+      showBubble({ text: "基础监控已启动，环境感知模型正在后台初始化。", tone: "success" });
       if (process.env.JARVIS_DESKTOP_DEMO === "1") runDemo();
       return { ...state };
     } catch (error) {
@@ -565,6 +609,18 @@ async function startJarvis() {
     }
   })();
   return startPromise;
+}
+
+function handleBackendProgress(message) {
+  if (message?.type === "runtime-backend") {
+    publishState({
+      inferenceBackend: message.backend,
+      inferenceReason: typeof message.reason === "string" ? message.reason : "",
+    });
+    send(launcherWindow, "jarvis:progress", message.message);
+    return;
+  }
+  send(launcherWindow, "jarvis:progress", message);
 }
 
 async function cancelStart() {
@@ -695,7 +751,7 @@ app.whenReady().then(() => {
     packaged: app.isPackaged,
     useFake,
   });
-  manager.on("progress", message => send(launcherWindow, "jarvis:progress", message));
+  manager.on("progress", handleBackendProgress);
   manager.on("event", handleBackendEvent);
   manager.on("error", error => publishState({ phase: "error", error: error.message }));
   createLauncherWindow();
@@ -705,6 +761,9 @@ app.whenReady().then(() => {
   registerIpc();
   if (!globalShortcut.register("CommandOrControl+M", togglePetChat)) {
     send(launcherWindow, "jarvis:progress", "快捷键 Ctrl + M 注册失败，可能已被其他应用占用");
+  }
+  if (process.env.JARVIS_AUTO_START === "1") {
+    setImmediate(() => startJarvis().catch(() => {}));
   }
 });
 

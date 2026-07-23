@@ -20,6 +20,7 @@ test("build uses official Electron sources before mainland mirrors", () => {
 
   assert.equal(attempts.primary.env.ELECTRON_MIRROR, undefined);
   assert.equal(attempts.primary.env.ELECTRON_BUILDER_BINARIES_MIRROR, undefined);
+  assert.equal(attempts.primary.env.NO_UPDATE_NOTIFIER, "1");
   assert.equal(attempts.fallback.env.ELECTRON_MIRROR, "https://mirror.example/electron/");
   assert.equal(
     attempts.fallback.env.ELECTRON_BUILDER_BINARIES_MIRROR,

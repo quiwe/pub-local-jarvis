@@ -667,7 +667,12 @@ bool Worker::start_duplex(std::string session_id, std::string instruction) {
   if (session_id.empty() || instruction.empty() || instruction.size() > 8000 ||
       instruction.find('\0') != std::string::npos || !capture_thread_.joinable()) return false;
   stop_duplex();
+  const auto operation_generation = duplex_operation_generation_.load();
   if (!runtime_->start_duplex(instruction)) return false;
+  if (operation_generation != duplex_operation_generation_.load()) {
+    runtime_->stop_duplex();
+    return false;
+  }
   {
     std::lock_guard lock(mutex_);
     duplex_session_id_ = std::move(session_id);
@@ -819,6 +824,7 @@ bool Worker::start_duplex(std::string session_id, std::string instruction) {
 }
 
 void Worker::stop_duplex() noexcept {
+  duplex_operation_generation_.fetch_add(1);
   const bool was_active = duplex_task_active_.exchange(false);
   duplex_rebuild_requested_.store(false);
   duplex_input_ready_.notify_all();

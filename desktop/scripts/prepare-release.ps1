@@ -1,7 +1,9 @@
 #requires -Version 5.1
 
 [CmdletBinding()]
-param()
+param(
+    [string]$CudaToolkitRoot = $env:CUDA_PATH
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -16,7 +18,8 @@ $env:VSLANG = "1033"
 $DesktopRoot = Split-Path -Parent $PSScriptRoot
 $ProjectRoot = Split-Path -Parent $DesktopRoot
 $ReleaseRoot = Join-Path $ProjectRoot "build\release"
-$NativeBuildRoot = Join-Path $ReleaseRoot "native"
+$NativeCpuBuildRoot = Join-Path $ReleaseRoot "native-cpu"
+$NativeCudaBuildRoot = Join-Path $ReleaseRoot "native-cuda-13.3"
 $UpstreamRoot = Join-Path $ReleaseRoot "upstream"
 $RuntimeDistRoot = Join-Path $DesktopRoot "build\runtime"
 $RuntimeRoot = Join-Path $RuntimeDistRoot "jarvis-launcher"
@@ -66,6 +69,74 @@ function Get-CompatiblePython {
     throw "Python 3.12 or newer is required on the release build machine."
 }
 
+function Get-VisualStudioGenerator {
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
+        throw "Visual Studio Installer (vswhere.exe) was not found. Install Visual Studio C++ Build Tools."
+    }
+    $installationVersion = (& $vswhere -latest -products * `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        -property installationVersion | Select-Object -First 1).Trim()
+    if (-not $installationVersion) {
+        throw "No Visual Studio installation with the x64 C++ build tools was found."
+    }
+    $majorVersion = [int]($installationVersion.Split(".")[0])
+    switch ($majorVersion) {
+        17 { return "Visual Studio 17 2022" }
+        18 { return "Visual Studio 18 2026" }
+        default {
+            throw "Visual Studio $majorVersion is installed, but this release script does not know its CMake generator name."
+        }
+    }
+}
+
+function Get-CudaToolkitRoot {
+    if ($CudaToolkitRoot) {
+        $candidate = [IO.Path]::GetFullPath($CudaToolkitRoot)
+        if (Test-Path -LiteralPath (Join-Path $candidate "bin\nvcc.exe") -PathType Leaf) {
+            return $candidate
+        }
+    }
+    $localToolkit = Get-ChildItem -LiteralPath (Join-Path $ProjectRoot "build") `
+        -Filter "cuda-toolkit-*" -Directory -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "bin\nvcc.exe") -PathType Leaf } |
+        Select-Object -First 1 -ExpandProperty FullName
+    if ($localToolkit) { return [IO.Path]::GetFullPath($localToolkit) }
+    $toolkitParent = Join-Path $env:ProgramFiles "NVIDIA GPU Computing Toolkit\CUDA"
+    $candidate = Get-ChildItem -LiteralPath $toolkitParent -Directory -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "bin\nvcc.exe") -PathType Leaf } |
+        Select-Object -First 1 -ExpandProperty FullName
+    if ($candidate) { return $candidate }
+    throw "CUDA Toolkit 13.1 or newer is required on the release build machine to package NVIDIA acceleration."
+}
+
+function Enter-VisualStudioEnvironment {
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    $installationPath = (& $vswhere -latest -products * `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        -property installationPath | Select-Object -First 1).Trim()
+    $devCommand = Join-Path $installationPath "Common7\Tools\VsDevCmd.bat"
+    if (-not (Test-Path -LiteralPath $devCommand -PathType Leaf)) {
+        throw "Visual Studio developer environment script was not found."
+    }
+    $commandLine = "`"$devCommand`" -arch=x64 -host_arch=x64 >nul && set"
+    $environmentLines = & cmd.exe /d /s /c $commandLine
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to initialize the Visual Studio x64 build environment."
+    }
+    foreach ($line in $environmentLines) {
+        $separator = $line.IndexOf("=")
+        if ($separator -le 0) { continue }
+        [Environment]::SetEnvironmentVariable(
+            $line.Substring(0, $separator),
+            $line.Substring($separator + 1),
+            "Process"
+        )
+    }
+}
+
 function Prepare-PatchedUpstream {
     $expectedHash = (Get-FileHash -LiteralPath $PatchPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $currentHash = if (Test-Path -LiteralPath $PatchMarker -PathType Leaf) {
@@ -102,18 +173,27 @@ function Prepare-PatchedUpstream {
 }
 
 function Build-NativeRuntime {
-    New-Item -ItemType Directory -Path $NativeBuildRoot -Force | Out-Null
+    param(
+        [Parameter(Mandatory = $true)][string]$BuildRoot,
+        [Parameter(Mandatory = $true)][bool]$UseCuda,
+        [string]$ToolkitRoot = ""
+    )
+
+    New-Item -ItemType Directory -Path $BuildRoot -Force | Out-Null
+    $visualStudioGenerator = Get-VisualStudioGenerator
+    $generator = if ($UseCuda) { "Ninja" } else { $visualStudioGenerator }
+    if ($UseCuda) { Enter-VisualStudioEnvironment }
+    Write-Host "Using CMake generator: $generator"
     $configure = @(
         "-S", $ProjectRoot,
-        "-B", $NativeBuildRoot,
-        "-G", "Visual Studio 17 2022",
-        "-A", "x64",
+        "-B", $BuildRoot,
+        "-G", $generator,
         "-DJARVIS_ENABLE_STUB_RUNTIME=OFF",
         "-DJARVIS_RUNTIME_ENABLE_UPSTREAM=ON",
         "-DJARVIS_RUNTIME_UPSTREAM_SOURCE_DIR=$UpstreamRoot",
         "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
         "-DBUILD_SHARED_LIBS=OFF",
-        "-DGGML_CUDA=OFF",
+        "-DGGML_CUDA=$($UseCuda.ToString().ToUpperInvariant())",
         "-DGGML_CCACHE=OFF",
         "-DGGML_OPENMP=OFF",
         "-DLLAMA_OPENSSL=OFF",
@@ -125,20 +205,40 @@ function Build-NativeRuntime {
         "-DLLAMA_BUILD_COMMON=ON",
         "-DLLAMA_BUILD_TOOLS=ON"
     )
+    if ($UseCuda) {
+        $configure += @(
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_C_COMPILER=cl.exe",
+            "-DCMAKE_CXX_COMPILER=cl.exe",
+            "-DCMAKE_CUDA_FLAGS=-allow-unsupported-compiler",
+            "-DCUDAToolkit_ROOT=$ToolkitRoot",
+            "-DCMAKE_CUDA_COMPILER=$(Join-Path $ToolkitRoot 'bin\nvcc.exe')",
+            "-DCMAKE_CUDA_ARCHITECTURES=75;80;86;89;120",
+            "-DGGML_CUDA_NCCL=OFF"
+        )
+    } else {
+        $configure += @("-A", "x64")
+    }
     Invoke-Checked -FilePath "cmake.exe" -Arguments $configure
-    Invoke-Checked -FilePath "cmake.exe" -Arguments @(
-        "--build", $NativeBuildRoot, "--config", "Release",
-        "--target", "jarvis-native-worker", "--parallel"
-    )
+    $build = @("--build", $BuildRoot, "--target", "jarvis-native-worker")
+    $build += if ($UseCuda) { @("--parallel", "4") } else { @("--parallel") }
+    if (-not $UseCuda) { $build += @("--config", "Release") }
+    Invoke-Checked -FilePath "cmake.exe" -Arguments $build
 }
 
 function Build-PythonRuntime {
     $bootstrapPython = Get-CompatiblePython
     $buildVenv = Join-Path $ReleaseRoot "python-env"
     $python = Join-Path $buildVenv "Scripts\python.exe"
-    if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
-        Invoke-Checked -FilePath $bootstrapPython -Arguments @("-m", "venv", $buildVenv)
+    if (Test-Path -LiteralPath $buildVenv) {
+        $resolvedBuildVenv = [IO.Path]::GetFullPath($buildVenv)
+        $releasePrefix = [IO.Path]::GetFullPath($ReleaseRoot).TrimEnd("\") + "\"
+        if (-not $resolvedBuildVenv.StartsWith($releasePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to replace a Python build environment outside build/release."
+        }
+        Remove-Item -LiteralPath $resolvedBuildVenv -Recurse -Force
     }
+    Invoke-Checked -FilePath $bootstrapPython -Arguments @("-m", "venv", $buildVenv)
     Invoke-Checked -FilePath $python -Arguments @("-m", "pip", "install", "--upgrade", "pip")
     Invoke-Checked -FilePath $python -Arguments @("-m", "pip", "install", "$ProjectRoot[packaging]")
     Invoke-Checked -FilePath $python -Arguments @(
@@ -165,11 +265,39 @@ function Build-PythonRuntime {
 }
 
 function Copy-NativeRuntime {
-    $worker = Join-Path $NativeBuildRoot "native\Release\jarvis-native-worker.exe"
-    if (-not (Test-Path -LiteralPath $worker -PathType Leaf)) {
-        throw "Native release worker was not produced."
+    param([Parameter(Mandatory = $true)][string]$ToolkitRoot)
+
+    $cpuWorker = Join-Path $NativeCpuBuildRoot "native\Release\jarvis-native-worker.exe"
+    $cudaWorker = Join-Path $NativeCudaBuildRoot "native\jarvis-native-worker.exe"
+    foreach ($worker in @($cpuWorker, $cudaWorker)) {
+        if (-not (Test-Path -LiteralPath $worker -PathType Leaf)) {
+            throw "Native release worker was not produced: $worker"
+        }
     }
-    Copy-Item -LiteralPath $worker -Destination $RuntimeRoot -Force
+    Copy-Item -LiteralPath $cpuWorker `
+        -Destination (Join-Path $RuntimeRoot "jarvis-native-worker-cpu.exe") -Force
+    Copy-Item -LiteralPath $cudaWorker `
+        -Destination (Join-Path $RuntimeRoot "jarvis-native-worker-cuda.exe") -Force
+    Copy-Item -LiteralPath (Join-Path $VendorRoot "tools\omni\assets\default_ref_audio\default_ref_audio.wav") `
+        -Destination (Join-Path $RuntimeRoot "default_ref_audio.wav") -Force
+
+    $cudaBinRoots = @(
+        (Join-Path $ToolkitRoot "bin"),
+        (Join-Path $ToolkitRoot "bin\x64")
+    )
+    $cudaRuntimeFiles = @()
+    foreach ($pattern in @("cudart64_*.dll", "cublas64_*.dll", "cublasLt64_*.dll")) {
+        $matches = @($cudaBinRoots | ForEach-Object {
+            Get-ChildItem -LiteralPath $_ -Filter $pattern -File -ErrorAction SilentlyContinue
+        })
+        if ($matches.Count -eq 0) {
+            throw "CUDA runtime dependency was not found: $pattern"
+        }
+        $cudaRuntimeFiles += $matches
+    }
+    foreach ($file in $cudaRuntimeFiles | Sort-Object FullName -Unique) {
+        Copy-Item -LiteralPath $file.FullName -Destination $RuntimeRoot -Force
+    }
 
     $artifacts = Get-ChildItem -LiteralPath $RuntimeRoot -File | ForEach-Object {
         [ordered]@{
@@ -179,9 +307,9 @@ function Copy-NativeRuntime {
         }
     }
     $manifest = [ordered]@{
-        schema = 1
+        schema = 2
         architecture = "x64"
-        inference = "cpu"
+        inference = @("cuda", "cpu")
         artifacts = @($artifacts)
     } | ConvertTo-Json -Depth 5
     [IO.File]::WriteAllText(
@@ -193,11 +321,15 @@ function Copy-NativeRuntime {
 
 Write-Host "Preparing the pinned native source..."
 Prepare-PatchedUpstream
+$resolvedCudaToolkitRoot = Get-CudaToolkitRoot
 Write-Host "Building the portable CPU native runtime..."
-Build-NativeRuntime
+Build-NativeRuntime -BuildRoot $NativeCpuBuildRoot -UseCuda $false
+Write-Host "Building the NVIDIA CUDA native runtime..."
+Build-NativeRuntime -BuildRoot $NativeCudaBuildRoot -UseCuda $true `
+    -ToolkitRoot $resolvedCudaToolkitRoot
 Write-Host "Freezing the Python backend..."
 Build-PythonRuntime
 Write-Host "Assembling the self-contained runtime..."
-Copy-NativeRuntime
+Copy-NativeRuntime -ToolkitRoot $resolvedCudaToolkitRoot
 Invoke-Checked -FilePath (Join-Path $RuntimeRoot "jarvis-launcher.exe") -Arguments @("--self-test")
 Write-Host "Release runtime is ready: $RuntimeRoot"

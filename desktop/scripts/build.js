@@ -34,8 +34,10 @@ function createBuildAttempts(environment = process.env) {
     label: "Electron Builder",
   };
   return {
-    primary: { ...common, env: primary },
-    fallback: fallbackEnabled ? { ...common, env: mirror } : null,
+    primary: { ...common, env: { ...primary, NO_UPDATE_NOTIFIER: "1" } },
+    fallback: fallbackEnabled
+      ? { ...common, env: { ...mirror, NO_UPDATE_NOTIFIER: "1" } }
+      : null,
   };
 }
 

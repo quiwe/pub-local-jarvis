@@ -2,6 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const net = require("node:net");
 const WebSocket = require("ws");
 const {
   BackendManager,
@@ -9,6 +10,7 @@ const {
   backendLaunchSpec,
   createBackendOutputForwarder,
   parseBackendOutputLine,
+  selectAvailablePort,
 } = require("../src/backend-manager");
 
 test("the real backend launcher has no browser mode", () => {
@@ -117,6 +119,52 @@ test("backend output preserves UTF-8 characters split across chunks", () => {
   assert.deepEqual(messages, ["正在下载模型", "本地服务已启动"]);
 });
 
+test("backend output falls back to GB18030 for Windows native messages", () => {
+  const messages = [];
+  const forwarder = createBackendOutputForwarder(value => messages.push(value));
+
+  forwarder.write(Buffer.from([0xc6, 0xf4, 0xb6]));
+  forwarder.write(Buffer.from([0xaf, 0xca, 0xa7, 0xb0, 0xdc, 0x0a]));
+  forwarder.end();
+
+  assert.deepEqual(messages, ["启动失败"]);
+});
+
+test("packaged startup selects an available port and unique pipe", async () => {
+  const manager = new BackendManager({
+    backendRoot: process.cwd(),
+    packaged: true,
+    portSelector: async () => 43123,
+    pipeNameFactory: () => "\\\\.\\pipe\\AIJarvis.Worker.test",
+  });
+  let healthChecks = 0;
+  manager.health = async () => (++healthChecks > 1 ? { status: "ok" } : null);
+  manager.waitForEventConnection = async () => {};
+  manager.spawnBackend = () => {
+    manager.child = { exitCode: null };
+    assert.equal(manager.baseUrl, "http://127.0.0.1:43123");
+    assert.equal(manager.pipeName, "\\\\.\\pipe\\AIJarvis.Worker.test");
+  };
+
+  await manager.start();
+
+  assert.equal(manager.ownsBackend, true);
+});
+
+test("port selection skips an occupied preferred port", async (context) => {
+  const occupied = net.createServer();
+  await new Promise((resolve, reject) => {
+    occupied.once("error", reject);
+    occupied.listen(0, "127.0.0.1", resolve);
+  });
+  context.after(() => occupied.close());
+  const preferredPort = occupied.address().port;
+
+  const selectedPort = await selectAvailablePort(preferredPort);
+
+  assert.notEqual(selectedPort, preferredPort);
+});
+
 test("structured download progress is parsed and clamped", () => {
   const value = parseBackendOutputLine(
     'JARVIS_PROGRESS {"type":"download-progress","message":"正在下载模型","percent":104}',
@@ -126,6 +174,19 @@ test("structured download progress is parsed and clamped", () => {
     type: "download-progress",
     message: "正在下载模型",
     percent: 100,
+  });
+});
+
+test("structured runtime backend progress is preserved", () => {
+  const value = parseBackendOutputLine(
+    'JARVIS_PROGRESS {"type":"runtime-backend","backend":"cpu","message":"CPU fallback","reason":"CUDA failed"}',
+  );
+
+  assert.deepEqual(value, {
+    type: "runtime-backend",
+    backend: "cpu",
+    message: "CPU fallback",
+    reason: "CUDA failed",
   });
 });
 
@@ -161,5 +222,5 @@ test("pet chat uses the dedicated assistant endpoint", async () => {
   assert.equal(request[0], "/api/v1/assistant/chat");
   assert.equal(request[1].method, "POST");
   assert.deepEqual(JSON.parse(request[1].body), { message: "在吗？" });
-  assert.equal(request[1].timeout, 3 * 60 * 1000);
+  assert.equal(request[1].timeout, 10 * 60 * 1000 + 15 * 1000);
 });

@@ -27,7 +27,8 @@ from jarvis_backend.model_download import (
 )
 from jarvis_backend.settings import Settings, get_settings
 
-PIPE_NAME = r"\\.\pipe\AIJarvis.Worker.v1"
+DEFAULT_SERVER_PORT = 31847
+DEFAULT_PIPE_NAME = r"\\.\pipe\AIJarvis.Worker.v1"
 MINIMUM_FREE_BYTES = 8 * 1024**3
 
 
@@ -45,6 +46,16 @@ def _download_progress(completed: int, total: int) -> None:
         "completed": completed,
         "total": total,
         "percent": percent,
+    }
+    print(f"JARVIS_PROGRESS {json.dumps(payload, ensure_ascii=False)}", flush=True)
+
+
+def _runtime_backend_progress(backend: str, message: str, reason: str = "") -> None:
+    payload = {
+        "type": "runtime-backend",
+        "backend": backend,
+        "message": message,
+        "reason": reason,
     }
     print(f"JARVIS_PROGRESS {json.dumps(payload, ensure_ascii=False)}", flush=True)
 
@@ -72,11 +83,25 @@ def _data_root() -> Path:
     return (Path(local_app_data) / "AIJarvis").resolve()
 
 
+def _model_root(data_root: Path) -> Path:
+    configured = os.getenv("JARVIS_MODEL_ROOT")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return data_root / "models" / "MiniCPM-o-4_5-gguf"
+
+
 def _toml_path(path: Path) -> str:
     return path.resolve().as_posix().replace('"', '\\"')
 
 
-def build_runtime_config(data_root: Path, worker_path: Path, model_root: Path) -> str:
+def build_runtime_config(
+    data_root: Path,
+    worker_path: Path,
+    model_root: Path,
+    server_port: int = DEFAULT_SERVER_PORT,
+    pipe_name: str = DEFAULT_PIPE_NAME,
+) -> str:
+    escaped_pipe_name = pipe_name.replace("\\", "\\\\").replace('"', '\\"')
     return f'''[app]
 name = "AI Jarvis"
 environment = "production"
@@ -84,12 +109,12 @@ log_level = "INFO"
 
 [server]
 host = "127.0.0.1"
-port = 8000
+port = {server_port}
 
 [native]
 mode = "process"
 protocol_version = 1
-pipe_name = "\\\\\\\\.\\\\pipe\\\\AIJarvis.Worker.v1"
+pipe_name = "{escaped_pipe_name}"
 worker_path = "{_toml_path(worker_path)}"
 model_path = "{_toml_path(model_root)}"
 request_timeout_seconds = 120.0
@@ -120,6 +145,22 @@ max_keyframes = 40
 exit_grace_seconds = 90
 exit_samples = 4
 '''
+
+
+def _server_port() -> int:
+    raw_value = os.getenv("JARVIS_SERVER_PORT", str(DEFAULT_SERVER_PORT))
+    try:
+        port = int(raw_value)
+    except ValueError:
+        raise RuntimeError("JARVIS_SERVER_PORT must be an integer") from None
+    if not 1 <= port <= 65535:
+        raise RuntimeError("JARVIS_SERVER_PORT must be between 1 and 65535")
+    return port
+
+
+def _pipe_name() -> str:
+    value = os.getenv("JARVIS_PIPE_NAME", "").strip()
+    return value or rf"\\.\pipe\AIJarvis.Worker.{os.getpid()}"
 
 
 def _ensure_models(model_root: Path) -> None:
@@ -157,17 +198,98 @@ def _ensure_models(model_root: Path) -> None:
     _progress("模型准备完成")
 
 
-def _wait_for_pipe(worker: subprocess.Popen[bytes], timeout_seconds: float = 600) -> None:
+def _wait_for_pipe(
+    worker: subprocess.Popen[bytes],
+    pipe_name: str,
+    timeout_seconds: float = 600,
+) -> None:
     wait_named_pipe = ctypes.windll.kernel32.WaitNamedPipeW
     wait_named_pipe.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32]
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         if worker.poll() is not None:
             raise RuntimeError(f"原生推理进程启动失败，退出代码 {worker.returncode}")
-        if wait_named_pipe(PIPE_NAME, 1000):
+        if wait_named_pipe(pipe_name, 1000):
             return
         time.sleep(0.1)
     raise RuntimeError("原生推理进程未能在 10 分钟内完成初始化")
+
+
+def _has_nvidia_driver() -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        ctypes.WinDLL("nvcuda.dll")
+    except OSError:
+        return False
+    return True
+
+
+def worker_candidates(
+    runtime_root: Path,
+    *,
+    nvidia_available: bool | None = None,
+) -> list[tuple[str, Path]]:
+    cpu_worker = runtime_root / "jarvis-native-worker-cpu.exe"
+    cuda_worker = runtime_root / "jarvis-native-worker-cuda.exe"
+    legacy_worker = runtime_root / "jarvis-native-worker.exe"
+    resolved_cpu = cpu_worker if cpu_worker.is_file() else legacy_worker
+    has_nvidia = _has_nvidia_driver() if nvidia_available is None else nvidia_available
+
+    candidates: list[tuple[str, Path]] = []
+    if has_nvidia and cuda_worker.is_file():
+        candidates.append(("cuda", cuda_worker))
+    if resolved_cpu.is_file():
+        candidates.append(("cpu", resolved_cpu))
+    return candidates
+
+
+def _start_native_worker(
+    candidates: list[tuple[str, Path]],
+    pipe_name: str,
+    model_root: Path,
+    data_root: Path,
+    environment: dict[str, str],
+    worker_log: object,
+) -> tuple[subprocess.Popen[bytes], Path, str, str]:
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    cuda_failure = ""
+    for backend, worker_path in candidates:
+        if backend == "cuda":
+            _progress("检测到 NVIDIA 显卡，正在尝试 CUDA 加速")
+        worker_environment = dict(environment)
+        reference_audio = worker_path.parent / "default_ref_audio.wav"
+        if reference_audio.is_file():
+            worker_environment["JARVIS_REF_AUDIO_PATH"] = str(reference_audio.resolve())
+        worker = subprocess.Popen(
+            [str(worker_path), pipe_name, str(model_root)],
+            cwd=data_root,
+            env=worker_environment,
+            stdout=worker_log,
+            stderr=subprocess.STDOUT,
+            creationflags=creation_flags,
+        )
+        try:
+            _wait_for_pipe(worker, pipe_name)
+        except Exception as exc:
+            _terminate(worker)
+            if backend != "cuda":
+                raise
+            cuda_failure = str(exc)
+            _progress(f"CUDA 加速启动失败，正在自动切换到 CPU：{cuda_failure}")
+            continue
+
+        if backend == "cuda":
+            _runtime_backend_progress("cuda", "NVIDIA CUDA 加速已启用")
+        else:
+            reason = cuda_failure or "未检测到可用的 NVIDIA CUDA 运行环境"
+            _runtime_backend_progress(
+                "cpu",
+                "当前模型正在使用 CPU，推理体验会明显下降。",
+                reason,
+            )
+        return worker, worker_path, backend, cuda_failure
+    raise RuntimeError("安装包中没有可用的原生推理工作进程，请重新安装 AI Jarvis")
 
 
 def _terminate(process: subprocess.Popen[bytes] | None) -> None:
@@ -195,7 +317,10 @@ def _serve(config_path: Path) -> int:
 
 def _self_test() -> int:
     runtime_root = _runtime_root()
-    required = [runtime_root / "jarvis-native-worker.exe"]
+    required = [
+        runtime_root / "jarvis-native-worker-cpu.exe",
+        runtime_root / "jarvis-native-worker-cuda.exe",
+    ]
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise RuntimeError(f"安装包运行时不完整：{', '.join(missing)}")
@@ -220,18 +345,15 @@ def _launch() -> int:
     data_root.mkdir(parents=True, exist_ok=True)
     runtime_data = data_root / "runtime"
     runtime_data.mkdir(parents=True, exist_ok=True)
-    model_root = data_root / "models" / "MiniCPM-o-4_5-gguf"
-    worker_path = runtime_root / "jarvis-native-worker.exe"
-    if not worker_path.is_file():
-        raise RuntimeError("安装包缺少 jarvis-native-worker.exe，请重新安装 AI Jarvis")
+    model_root = _model_root(data_root)
+    candidates = worker_candidates(runtime_root)
+    if not candidates:
+        raise RuntimeError("安装包缺少原生推理工作进程，请重新安装 AI Jarvis")
 
     _progress("正在检查本地模型")
     _ensure_models(model_root)
-    config_path = runtime_data / "real.toml"
-    config_path.write_text(
-        build_runtime_config(data_root, worker_path, model_root), encoding="utf-8"
-    )
-
+    server_port = _server_port()
+    pipe_name = _pipe_name()
     environment = os.environ.copy()
     environment["PATH"] = f"{runtime_root}{os.pathsep}{environment.get('PATH', '')}"
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -240,15 +362,20 @@ def _launch() -> int:
     backend: subprocess.Popen[bytes] | None = None
     try:
         _progress("正在启动本地推理服务")
-        worker = subprocess.Popen(
-            [str(worker_path), PIPE_NAME, str(model_root)],
-            cwd=data_root,
-            env=environment,
-            stdout=worker_log,
-            stderr=subprocess.STDOUT,
-            creationflags=creation_flags,
+        worker, worker_path, inference_backend, _ = _start_native_worker(
+            candidates,
+            pipe_name,
+            model_root,
+            data_root,
+            environment,
+            worker_log,
         )
-        _wait_for_pipe(worker)
+        environment["JARVIS_ACTIVE_INFERENCE_BACKEND"] = inference_backend
+        config_path = runtime_data / "real.toml"
+        config_path.write_text(
+            build_runtime_config(data_root, worker_path, model_root, server_port, pipe_name),
+            encoding="utf-8",
+        )
         backend = subprocess.Popen(
             [sys.executable, "--serve", str(config_path)],
             cwd=data_root,
@@ -259,7 +386,9 @@ def _launch() -> int:
         while worker.poll() is None and backend.poll() is None:
             time.sleep(1)
         if backend.poll() is not None:
+            _progress(f"后端服务进程异常退出，代码 {backend.returncode}")
             return int(backend.returncode or 0)
+        _progress(f"原生推理进程异常退出，代码 {worker.returncode}")
         return int(worker.returncode or 0)
     finally:
         _terminate(backend)

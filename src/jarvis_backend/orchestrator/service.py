@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets"
 
 AMBIENT_DUPLEX_SESSION_ID = "jarvis-ambient"
+PET_CHAT_TIMEOUT_SECONDS = 600.0
 SCREEN_IDLE_MESSAGES = (
     "是在摸鱼吗？",
     "ZZZ...",
@@ -309,6 +310,12 @@ class OrchestrationService:
         cleaned = cleaned.replace("<|", "< |")
 
         async with self._pet_chat_lock:
+            paused_ambient_duplex = (
+                self._monitoring_requested
+                and self._duplex_session_id == AMBIENT_DUPLEX_SESSION_ID
+            )
+            if paused_ambient_duplex:
+                await self._stop_duplex_native()
             history = [
                 {"user": user[-1000:], "assistant": assistant[-1500:]}
                 for user, assistant in self._pet_chat_history
@@ -323,17 +330,29 @@ class OrchestrationService:
                 f"{json.dumps(cleaned, ensure_ascii=False)}\n"
                 "只输出给用户的回复正文。"
             )
-            response = await self.native_client.request(
-                "ask", {"text": prompt, "_timeout_seconds": 180.0}
-            )
-            reply = self._clean_pet_chat_reply(str(response.get("text", "")))
-            if not reply:
-                raise RuntimeError("local model returned an empty chat response")
-            self._pet_chat_history.append((cleaned, reply))
-            await self.events.publish(
-                Event("pet.chat.completed", {"message_length": len(cleaned)})
-            )
-            return reply
+            try:
+                response = await self.native_client.request(
+                    "ask", {"text": prompt, "_timeout_seconds": PET_CHAT_TIMEOUT_SECONDS}
+                )
+                reply = self._clean_pet_chat_reply(str(response.get("text", "")))
+                if not reply:
+                    raise RuntimeError("local model returned an empty chat response")
+                self._pet_chat_history.append((cleaned, reply))
+                await self.events.publish(
+                    Event("pet.chat.completed", {"message_length": len(cleaned)})
+                )
+                return reply
+            finally:
+                if (
+                    paused_ambient_duplex
+                    and self._monitoring_requested
+                    and self._duplex_session_id is None
+                    and self._ambient_duplex_task is None
+                ):
+                    self._ambient_duplex_task = asyncio.create_task(
+                        self._initialize_ambient_duplex(),
+                        name="jarvis-ambient-duplex-resume-after-chat",
+                    )
 
     @staticmethod
     def _clean_pet_chat_reply(message: str) -> str:

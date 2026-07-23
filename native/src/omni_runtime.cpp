@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -164,6 +165,7 @@ class RealOmniRuntime final : public IOmniRuntime {
     unload();
     round_ = 0;
     const fs::path root = fs::u8path(model_path);
+    model_root_ = root;
     const auto validation = runtime::validate_minicpm_o_4_5_layout(root);
     if (!validation.ok()) throw std::runtime_error(validation_error(validation));
 
@@ -180,7 +182,10 @@ class RealOmniRuntime final : public IOmniRuntime {
     // Structured perception includes scene evidence plus optional course fields.
     // Smaller budgets regularly truncate otherwise valid JSON before its closing brace.
     params_.n_predict = 1024;
-    params_.n_gpu_layers = 99;
+    // Let llama.cpp fit GPU layers to currently available VRAM. Hard-coding all
+    // layers makes 8 GB cards fail model initialization instead of partially
+    // offloading and continuing on the CPU.
+    params_.n_gpu_layers = -1;
     params_.cpuparams.n_threads = std::max(1, common_cpu_get_num_physical_cores());
     params_.cpuparams_batch.n_threads = params_.cpuparams.n_threads;
     params_.display_prompt = false;
@@ -330,6 +335,10 @@ class RealOmniRuntime final : public IOmniRuntime {
           "持续行为策略：" +
           instruction + "\n<|audio_start|>";
       duplex_context_->omni_assistant_prompt = "<|audio_end|><|im_end|>\n";
+      duplex_context_->force_listen_count = 1;
+      if (const auto ref_audio = reference_audio_path(); !ref_audio.empty()) {
+        duplex_context_->ref_audio_path = path_string(ref_audio);
+      }
       const auto debug_dir = path_string(fs::temp_directory_path() / "AIJarvis" / "duplex");
       fs::create_directories(debug_dir);
       if (!omni_duplex_session_begin(duplex_context_, "", debug_dir)) {
@@ -440,6 +449,21 @@ class RealOmniRuntime final : public IOmniRuntime {
   }
 
  private:
+  fs::path reference_audio_path() const {
+    if (const auto* configured = std::getenv("JARVIS_REF_AUDIO_PATH")) {
+      const auto candidate = fs::u8path(configured);
+      if (fs::is_regular_file(candidate)) return candidate;
+    }
+    for (const auto& candidate : {
+             model_root_ / "default_ref_audio.wav",
+             fs::current_path() / "default_ref_audio.wav",
+             fs::current_path() / "third_party/runtime/vendor/tools/omni/assets/"
+                                  "default_ref_audio/default_ref_audio.wav"}) {
+      if (fs::is_regular_file(candidate)) return candidate;
+    }
+    return {};
+  }
+
   static void remove_media(const std::vector<fs::path>& paths) noexcept {
     for (const auto& path : paths) {
       std::error_code error;
@@ -449,6 +473,7 @@ class RealOmniRuntime final : public IOmniRuntime {
 
   common_params params_{};
   common_params duplex_params_{};
+  fs::path model_root_{};
   omni_context* context_{};
   omni_context* duplex_context_{};
   llama_context* duplex_llama_context_{};

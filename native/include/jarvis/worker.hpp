@@ -69,6 +69,7 @@ class Worker {
   std::atomic_bool duplex_task_active_{false};
   std::atomic_bool duplex_rebuild_requested_{false};
   std::atomic_bool duplex_rebuilding_{false};
+  std::atomic_uint64_t duplex_operation_generation_{0};
   std::atomic_uint32_t duplex_completed_frames_{0};
   std::atomic_uint64_t duplex_sequence_{0};
   std::string duplex_session_id_{};

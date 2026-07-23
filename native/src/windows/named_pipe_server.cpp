@@ -10,6 +10,7 @@
 #include <span>
 #include <stdexcept>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace jarvis::win {
@@ -36,6 +37,7 @@ bool write_exact(HANDLE pipe, const std::byte* source, std::size_t size) {
 struct NamedPipeServer::Impl {
   std::wstring name; Worker& worker; std::atomic_bool stop{}; HANDLE pipe{INVALID_HANDLE_VALUE};
   std::mutex write_mutex;
+  std::jthread duplex_start_thread;
   Impl(std::wstring n, Worker& w) : name(std::move(n)), worker(w) {}
 };
 NamedPipeServer::NamedPipeServer(std::wstring name, Worker& worker) : impl_(std::make_unique<Impl>(std::move(name), worker)) {}
@@ -80,6 +82,7 @@ int NamedPipeServer::run() {
       auto decoded = ipc::decode(frame);
       if (!decoded) break;
       const auto type = decoded.message.header.type; const auto id = decoded.message.header.request_id;
+      bool response_deferred = false;
       if (type == ipc::MessageType::shutdown) { request_stop(); break; }
       if (type == ipc::MessageType::start) {
         try {
@@ -110,22 +113,33 @@ int NamedPipeServer::run() {
         const auto session_id = value.substr(0, separator);
         const auto instruction = separator == std::string::npos ? std::string{} :
                                                                     value.substr(separator + 1);
-        if (!impl_->worker.start_duplex(session_id, instruction)) {
-          constexpr std::string_view error =
-              R"({"error":"unable to start duplex task; monitoring must be active and enough GPU memory must be available"})";
-          const auto payload = std::span<const std::byte>(
-              reinterpret_cast<const std::byte*>(error.data()), error.size());
-          const auto response = ipc::encode(ipc::MessageType::error, id, payload);
-          std::lock_guard lock(impl_->write_mutex);
-          write_exact(impl_->pipe, response.data(), response.size());
-          continue;
-        }
+        if (impl_->duplex_start_thread.joinable()) impl_->duplex_start_thread.join();
+        response_deferred = true;
+        impl_->duplex_start_thread = std::jthread(
+            [this, id, session_id, instruction](std::stop_token) {
+              const bool started = impl_->worker.start_duplex(session_id, instruction);
+              std::vector<std::byte> response;
+              if (started) {
+                response = ipc::encode(ipc::MessageType::status, id, {});
+              } else {
+                constexpr std::string_view error =
+                    R"({"error":"unable to start duplex task; monitoring was stopped or enough GPU memory is unavailable"})";
+                const auto payload = std::span<const std::byte>(
+                    reinterpret_cast<const std::byte*>(error.data()), error.size());
+                response = ipc::encode(ipc::MessageType::error, id, payload);
+              }
+              std::lock_guard lock(impl_->write_mutex);
+              if (impl_->pipe != INVALID_HANDLE_VALUE) {
+                write_exact(impl_->pipe, response.data(), response.size());
+              }
+            });
       }
       if (type == ipc::MessageType::stop_duplex) impl_->worker.stop_duplex();
       if (type == ipc::MessageType::hello || type == ipc::MessageType::start ||
           type == ipc::MessageType::stop || type == ipc::MessageType::cancel ||
           type == ipc::MessageType::submit || type == ipc::MessageType::configure_game ||
           type == ipc::MessageType::start_duplex || type == ipc::MessageType::stop_duplex) {
+        if (response_deferred) continue;
         const auto response = ipc::encode(ipc::MessageType::status, id, {});
         std::lock_guard lock(impl_->write_mutex);
         if (!write_exact(impl_->pipe, response.data(), response.size())) break;

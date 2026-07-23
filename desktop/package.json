@@ -1,6 +1,6 @@
 {
   "name": "aijarvis-desktop",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "description": "Thin Electron desktop companion for the AI Jarvis backend",
   "author": "AI Jarvis Contributors",
@@ -14,7 +14,8 @@
     "assets:generate": "electron test/generate-assets.js",
     "assets:memory-references": "electron test/generate-memory-reference-assets.js",
     "deps:install": "node scripts/install-dependencies.js",
-    "build": "node scripts/build.js"
+    "build": "node scripts/build.js",
+    "verify:installer": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/verify-installer.ps1"
   },
   "dependencies": {
     "lucide": "^0.468.0",

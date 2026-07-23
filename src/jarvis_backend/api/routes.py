@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse
 
@@ -54,6 +56,7 @@ async def health(request: Request) -> HealthResponse:
         status="ok" if state == "ready" else "degraded",
         lifecycle=state,
         native_connected=orchestrator.native_connected,
+        inference_backend=os.getenv("JARVIS_ACTIVE_INFERENCE_BACKEND", "unknown"),
     )
 
 
