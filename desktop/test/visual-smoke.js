@@ -44,6 +44,7 @@ app.whenReady().then(async () => {
     monitoring: false,
     scene: "other",
     error: null,
+    environmentStatus: "idle",
     gameProfile: "我的世界",
   }));
   ipcMain.handle("jarvis:get-game-profiles", () => ({
@@ -127,6 +128,75 @@ app.whenReady().then(async () => {
       })()`);
       if (layout.scrollHeight > layout.clientHeight + 1) {
         throw new Error(`overview default layout overflow: ${JSON.stringify(layout)}`);
+      }
+    }
+  );
+  await capture(
+    "launcher-starting",
+    { width: 520, height: 760, useContentSize: true },
+    "launcher.html",
+    async window => {
+      window.webContents.send("jarvis:state", {
+        phase: "starting",
+        monitoring: false,
+        scene: "other",
+        error: null,
+        gameProfile: "我的世界",
+      });
+      window.webContents.send("jarvis:progress", {
+        type: "download-progress",
+        message: "正在下载模型：2.65 / 6.32 GiB",
+        percent: 42,
+      });
+      await new Promise(resolve => setTimeout(resolve, 120));
+      const layout = await window.webContents.executeJavaScript(`(() => {
+        const progress = document.querySelector('#startup-progress');
+        const view = document.querySelector('#overview-view .view-scroll');
+        return {
+          hidden: progress.hidden,
+          percent: document.querySelector('#startup-progress-track').getAttribute('aria-valuenow'),
+          value: document.querySelector('#startup-progress-value').textContent,
+          scrollHeight: view.scrollHeight,
+          clientHeight: view.clientHeight,
+        };
+      })()`);
+      if (layout.hidden || layout.percent !== "42" || layout.value !== "42%"
+          || layout.scrollHeight > layout.clientHeight + 1) {
+        throw new Error(`launcher progress layout failed: ${JSON.stringify(layout)}`);
+      }
+    }
+  );
+  await capture(
+    "launcher-environment-initializing",
+    { width: 520, height: 760, useContentSize: true },
+    "launcher.html",
+    async window => {
+      window.webContents.send("jarvis:state", {
+        phase: "running",
+        monitoring: true,
+        environmentStatus: "initializing",
+        scene: "other",
+        error: null,
+        gameProfile: "我的世界",
+      });
+      window.webContents.send("jarvis:progress", "正在初始化环境感知模型");
+      await new Promise(resolve => setTimeout(resolve, 120));
+      const layout = await window.webContents.executeJavaScript(`(() => {
+        const progress = document.querySelector('#startup-progress');
+        const view = document.querySelector('#overview-view .view-scroll');
+        return {
+          hidden: progress.hidden,
+          label: document.querySelector('#startup-progress-label').textContent,
+          value: document.querySelector('#startup-progress-value').textContent,
+          title: document.querySelector('#status-title').textContent,
+          scrollHeight: view.scrollHeight,
+          clientHeight: view.clientHeight,
+        };
+      })()`);
+      if (layout.hidden || layout.label !== "正在初始化环境感知模型"
+          || layout.value !== "进行中" || layout.title !== "基础监控已启动"
+          || layout.scrollHeight > layout.clientHeight + 1) {
+        throw new Error(`launcher environment progress failed: ${JSON.stringify(layout)}`);
       }
     }
   );

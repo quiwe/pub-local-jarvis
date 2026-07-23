@@ -56,6 +56,37 @@ def test_model_download_retries_with_mirror(tmp_path: Path) -> None:
     assert endpoints == ["https://huggingface.co", "https://mirror.example"]
 
 
+def test_model_download_reports_aggregate_byte_progress(tmp_path: Path) -> None:
+    progress: list[tuple[int, int]] = []
+
+    def snapshot_download(**kwargs: Any) -> None:
+        progress_bar = kwargs["tqdm_class"](
+            desc="Reconstructing model files",
+            total=model_download.MODEL_TOTAL_BYTES,
+            unit="B",
+        )
+        progress_bar.update(model_download.MODEL_TOTAL_BYTES // 2)
+        progress_bar.close()
+
+    download_models(
+        tmp_path,
+        "revision",
+        snapshot_download=snapshot_download,
+        log=lambda _message: None,
+        progress=lambda completed, total: progress.append((completed, total)),
+    )
+
+    assert progress[0] == (0, model_download.MODEL_TOTAL_BYTES)
+    assert progress[1] == (
+        model_download.MODEL_TOTAL_BYTES // 2,
+        model_download.MODEL_TOTAL_BYTES,
+    )
+    assert progress[-1] == (
+        model_download.MODEL_TOTAL_BYTES,
+        model_download.MODEL_TOTAL_BYTES,
+    )
+
+
 def test_model_download_redacts_token_from_final_error(tmp_path: Path) -> None:
     token = "private-token"
 

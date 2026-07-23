@@ -7,6 +7,11 @@ const phaseChip = $("#phase-chip");
 const phaseChipLabel = phaseChip.querySelector("span");
 const statusTitle = $("#status-title");
 const statusDetail = $("#status-detail");
+const startupProgress = $("#startup-progress");
+const startupProgressLabel = $("#startup-progress-label");
+const startupProgressValue = $("#startup-progress-value");
+const startupProgressTrack = $("#startup-progress-track");
+const startupProgressBar = $("#startup-progress-bar");
 const monitorValue = $("#monitor-value");
 const sceneValue = $("#scene-value");
 const activityLog = $("#activity-log");
@@ -45,6 +50,7 @@ let persistedProfileIds = new Set();
 let memoryMode = "text";
 let currentMemoryImages = [];
 let selectedMemoryImageId = "";
+let lastLoggedDownloadPercent = -5;
 
 const sceneNames = { game: "游戏", course: "网课", other: "其他" };
 const phaseView = {
@@ -82,18 +88,81 @@ function addLog(message) {
   while (activityLog.children.length > 6) activityLog.lastElementChild.remove();
 }
 
+function setStartupProgress(message, percent = null) {
+  startupProgress.hidden = false;
+  startupProgressLabel.textContent = message;
+  if (Number.isFinite(percent)) {
+    const value = Math.max(0, Math.min(100, Math.round(percent)));
+    startupProgressTrack.classList.remove("indeterminate");
+    startupProgressTrack.setAttribute("aria-valuenow", String(value));
+    startupProgressBar.style.width = `${value}%`;
+    startupProgressValue.textContent = `${value}%`;
+    return;
+  }
+  startupProgressTrack.classList.add("indeterminate");
+  startupProgressTrack.removeAttribute("aria-valuenow");
+  startupProgressBar.style.width = "";
+  startupProgressValue.textContent = "进行中";
+}
+
+function readableError(error) {
+  return String(error?.message || error || "操作失败")
+    .replace(/^Error invoking remote method '[^']+':\s*/i, "")
+    .replace(/^Error:\s*/i, "");
+}
+
+function handleProgress(payload) {
+  if (payload && typeof payload === "object" && payload.type === "download-progress") {
+    setStartupProgress(payload.message || "正在下载模型", payload.percent);
+    if (payload.percent >= lastLoggedDownloadPercent + 5 || payload.percent === 100) {
+      lastLoggedDownloadPercent = payload.percent;
+      addLog(`${payload.message || "正在下载模型"}（${payload.percent}%）`);
+    }
+    return;
+  }
+  const message = String(payload || "").trim();
+  if (!message) return;
+  addLog(message);
+  if (currentPhase !== "starting" && currentPhase !== "running") return;
+  if (/后端已就绪|本地服务已启动/.test(message)) {
+    setStartupProgress("正在启用环境感知");
+  } else if (/环境感知已就绪/.test(message)) {
+    setStartupProgress("环境感知已就绪", 100);
+  } else if (/正在初始化环境感知/.test(message)) {
+    setStartupProgress(message);
+  } else if (/模型准备完成/.test(message)) {
+    setStartupProgress("正在加载本地模型");
+  } else if (/正在校验|正在检查|正在连接|正在启动/.test(message)) {
+    setStartupProgress(message);
+  }
+}
+
 function render(state) {
   const phase = phaseView[state.phase] ? state.phase : "idle";
+  const wasStarting = currentPhase === "starting";
   currentPhase = phase;
   const [chip, title, detail] = phaseView[phase];
-  document.body.className = `phase-${phase}`;
+  document.body.className = `phase-${phase}${state.environmentStatus === "initializing"
+    ? " environment-initializing"
+    : ""}`;
   phaseChipLabel.textContent = chip;
   phaseChip.className = `phase-chip${phase === "running" ? " online" : phase === "error" ? " error" : ""}`;
-  statusTitle.textContent = title;
-  statusDetail.textContent = state.error || detail;
+  const initializingEnvironment = phase === "running" && state.environmentStatus === "initializing";
+  statusTitle.textContent = initializingEnvironment ? "基础监控已启动" : title;
+  statusDetail.textContent = state.error || (initializingEnvironment
+    ? "正在初始化环境感知模型，完成后将自动开始持续理解。"
+    : detail);
   monitorValue.textContent = state.monitoring ? "感知中" : phase === "paused" ? "已暂停" : "未运行";
   sceneValue.textContent = state.scene === "game" ? `游戏 · ${state.gameProfile}` : sceneNames[state.scene] || "其他";
   gameProfileSummary.textContent = `游戏方案：${state.gameProfile || "我的世界"}`;
+  if (phase === "starting" || initializingEnvironment) {
+    if (!wasStarting) {
+      lastLoggedDownloadPercent = -5;
+      setStartupProgress("正在检查本地模型");
+    }
+  } else {
+    startupProgress.hidden = true;
+  }
   startButton.hidden = phase === "running" || phase === "paused";
   startButton.disabled = false;
   const startIcon = document.createElement("i");
@@ -350,7 +419,7 @@ startButton.addEventListener("click", async () => {
     return;
   }
   addLog("已提交启动请求");
-  try { render(await window.jarvis.start()); } catch (error) { addLog(error.message); }
+  try { render(await window.jarvis.start()); } catch (error) { addLog(readableError(error)); }
 });
 
 pauseButton.addEventListener("click", async () => {
@@ -493,7 +562,7 @@ profileDialog.addEventListener("click", event => {
 });
 
 window.jarvis.onState(render);
-window.jarvis.onProgress(addLog);
+window.jarvis.onProgress(handleProgress);
 window.jarvis.onMemoryUpdated(() => {
   if (currentView === "memory") refreshMemory();
   else memoryDot.hidden = false;

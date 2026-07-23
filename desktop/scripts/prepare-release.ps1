@@ -155,6 +155,8 @@ function Build-PythonRuntime {
         "--name", "jarvis-launcher",
         "--paths", (Join-Path $ProjectRoot "src"),
         "--add-data", "$assets;jarvis_backend/assets",
+        "--hidden-import", "hf_xet",
+        "--copy-metadata", "hf-xet",
         "--distpath", $RuntimeDistRoot,
         "--workpath", (Join-Path $ReleaseRoot "pyinstaller-work"),
         "--specpath", $ReleaseRoot,

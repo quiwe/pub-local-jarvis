@@ -2,10 +2,13 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const WebSocket = require("ws");
 const {
   BackendManager,
   StartCancelledError,
   backendLaunchSpec,
+  createBackendOutputForwarder,
+  parseBackendOutputLine,
 } = require("../src/backend-manager");
 
 test("the real backend launcher has no browser mode", () => {
@@ -99,6 +102,51 @@ test("the packaged app launches its bundled runtime directly", () => {
 
   assert.equal(spec.executable, `${root}\\runtime\\jarvis-launcher.exe`);
   assert.deepEqual(spec.args, []);
+});
+
+test("backend output preserves UTF-8 characters split across chunks", () => {
+  const messages = [];
+  const forwarder = createBackendOutputForwarder(value => messages.push(value));
+  const output = Buffer.from("正在下载模型\n本地服务已启动\n", "utf8");
+
+  forwarder.write(output.subarray(0, 2));
+  forwarder.write(output.subarray(2, 11));
+  forwarder.write(output.subarray(11));
+  forwarder.end();
+
+  assert.deepEqual(messages, ["正在下载模型", "本地服务已启动"]);
+});
+
+test("structured download progress is parsed and clamped", () => {
+  const value = parseBackendOutputLine(
+    'JARVIS_PROGRESS {"type":"download-progress","message":"正在下载模型","percent":104}',
+  );
+
+  assert.deepEqual(value, {
+    type: "download-progress",
+    message: "正在下载模型",
+    percent: 100,
+  });
+});
+
+test("backend commands allow startup-specific timeouts", async () => {
+  const manager = new BackendManager({ backendRoot: process.cwd() });
+  let request;
+  manager.request = async (pathname, options) => { request = [pathname, options]; return {}; };
+
+  await manager.command("start_monitoring", {}, { timeout: 180000 });
+
+  assert.equal(request[0], "/api/v1/commands");
+  assert.equal(request[1].timeout, 180000);
+});
+
+test("startup waits until the backend event channel is open", async () => {
+  const manager = new BackendManager({ backendRoot: process.cwd() });
+  manager.socket = { readyState: WebSocket.CONNECTING };
+  manager.connectEvents = () => {};
+  setTimeout(() => { manager.socket.readyState = WebSocket.OPEN; }, 10);
+
+  await assert.doesNotReject(manager.waitForEventConnection(undefined, 200));
 });
 
 test("pet chat uses the dedicated assistant endpoint", async () => {

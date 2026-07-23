@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import importlib.metadata
+import json
 import os
 import shutil
 import ssl
@@ -10,7 +12,9 @@ import sys
 import time
 from pathlib import Path
 
+import hf_xet
 import uvicorn
+from huggingface_hub.utils._runtime import is_xet_available
 
 from jarvis_backend.app import create_app
 from jarvis_backend.model_download import (
@@ -29,6 +33,27 @@ MINIMUM_FREE_BYTES = 8 * 1024**3
 
 def _progress(message: str) -> None:
     print(message, flush=True)
+
+
+def _download_progress(completed: int, total: int) -> None:
+    percent = min(100, max(0, int(completed * 100 / max(total, 1))))
+    payload = {
+        "type": "download-progress",
+        "message": (
+            f"正在下载模型：{completed / 1024**3:.2f} / {total / 1024**3:.2f} GiB"
+        ),
+        "completed": completed,
+        "total": total,
+        "percent": percent,
+    }
+    print(f"JARVIS_PROGRESS {json.dumps(payload, ensure_ascii=False)}", flush=True)
+
+
+def _configure_utf8_output() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="replace", write_through=True)
 
 
 def _runtime_root() -> Path:
@@ -122,6 +147,7 @@ def _ensure_models(model_root: Path) -> None:
             primary_endpoint=os.getenv("JARVIS_HF_PRIMARY_ENDPOINT", "https://huggingface.co"),
             mirror_endpoint=mirror,
             log=_progress,
+            progress=_download_progress,
         )
 
     _progress("正在校验模型完整性，首次校验可能需要几分钟")
@@ -177,11 +203,18 @@ def _self_test() -> int:
     ssl.create_default_context()
     if not callable(download_models):
         raise RuntimeError("模型下载组件不可用")
+    if not callable(getattr(hf_xet, "download_files", None)):
+        raise RuntimeError("Xet 模型下载组件不可用")
+    importlib.metadata.version("hf-xet")
+    if not is_xet_available():
+        raise RuntimeError("Hugging Face 未识别到 Xet 模型下载组件")
     _progress("AI Jarvis 自包含运行时检查通过")
     return 0
 
 
 def _launch() -> int:
+    os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "30")
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
     runtime_root = _runtime_root()
     data_root = _data_root()
     data_root.mkdir(parents=True, exist_ok=True)
@@ -235,6 +268,7 @@ def _launch() -> int:
 
 
 def main() -> int:
+    _configure_utf8_output()
     parser = argparse.ArgumentParser(description="AI Jarvis packaged runtime")
     parser.add_argument("--serve", type=Path)
     parser.add_argument("--self-test", action="store_true")

@@ -3,9 +3,54 @@
 const { EventEmitter } = require("node:events");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const { StringDecoder } = require("node:string_decoder");
 const WebSocket = require("ws");
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const PROGRESS_PREFIX = "JARVIS_PROGRESS ";
+
+function parseBackendOutputLine(line) {
+  const cleaned = line.replace(/\x1b\[[0-9;]*m/g, "").trim();
+  if (!cleaned) return null;
+  if (!cleaned.startsWith(PROGRESS_PREFIX)) return cleaned;
+  try {
+    const payload = JSON.parse(cleaned.slice(PROGRESS_PREFIX.length));
+    if (payload?.type === "download-progress" && Number.isFinite(payload.percent)) {
+      return { ...payload, percent: Math.max(0, Math.min(100, payload.percent)) };
+    }
+  } catch (_) {}
+  return null;
+}
+
+function createBackendOutputForwarder(onMessage) {
+  const decoder = new StringDecoder("utf8");
+  let buffered = "";
+
+  const drain = flush => {
+    const lines = buffered.split(/\r\n|\n|\r/);
+    const tail = lines.pop() || "";
+    buffered = flush ? "" : tail;
+    for (const line of lines) {
+      const value = parseBackendOutputLine(line);
+      if (value) onMessage(value);
+    }
+    if (flush && tail) {
+      const value = parseBackendOutputLine(tail);
+      if (value) onMessage(value);
+    }
+  };
+
+  return {
+    write(chunk) {
+      buffered += decoder.write(chunk);
+      drain(false);
+    },
+    end() {
+      buffered += decoder.end();
+      drain(true);
+    },
+  };
+}
 
 class StartCancelledError extends Error {
   constructor() {
@@ -91,13 +136,25 @@ class BackendManager extends EventEmitter {
     }
   }
 
+  async waitForEventConnection(signal, timeout = 10000) {
+    const deadline = Date.now() + timeout;
+    this.connectEvents();
+    while (Date.now() < deadline) {
+      throwIfCancelled(signal);
+      if (this.socket?.readyState === WebSocket.OPEN) return;
+      if (!this.socket || this.socket.readyState > WebSocket.OPEN) this.connectEvents();
+      await delay(50);
+    }
+    throw new Error("后端事件通道连接超时，请重新启动应用");
+  }
+
   async start(options = {}) {
     const { signal } = options;
     throwIfCancelled(signal);
     if (await this.health(signal)) {
       throwIfCancelled(signal);
       this.emit("progress", "检测到正在运行的后端，正在连接");
-      this.connectEvents();
+      await this.waitForEventConnection(signal);
       return { owned: false };
     }
     this.emit("progress", this.useFake ? "正在启动开发后端" : "正在检查本地模型与运行时");
@@ -113,7 +170,7 @@ class BackendManager extends EventEmitter {
         throwIfCancelled(signal);
         this.ownsBackend = true;
         this.emit("progress", "后端已就绪");
-        this.connectEvents();
+        await this.waitForEventConnection(signal);
         return { owned: true };
       }
       await delay(1000);
@@ -164,15 +221,17 @@ class BackendManager extends EventEmitter {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
+        PYTHONIOENCODING: "utf-8",
+        PYTHONUNBUFFERED: "1",
+        PYTHONUTF8: "1",
         ...(this.dataRoot ? { JARVIS_DATA_ROOT: this.dataRoot } : {}),
       },
     });
-    const forward = chunk => {
-      const text = chunk.toString("utf8").replace(/\x1b\[[0-9;]*m/g, "").trim();
-      if (text) this.emit("progress", text.split(/\r?\n/).at(-1));
-    };
-    this.child.stdout.on("data", forward);
-    this.child.stderr.on("data", forward);
+    for (const stream of [this.child.stdout, this.child.stderr]) {
+      const forwarder = createBackendOutputForwarder(value => this.emit("progress", value));
+      stream.on("data", chunk => forwarder.write(chunk));
+      stream.on("end", () => forwarder.end());
+    }
     this.child.on("error", error => this.emit("error", error));
   }
 
@@ -197,10 +256,11 @@ class BackendManager extends EventEmitter {
     this.socket.on("error", () => {});
   }
 
-  command(command, argumentsValue = {}) {
+  command(command, argumentsValue = {}, options = {}) {
     return this.request("/api/v1/commands", {
       method: "POST",
       body: JSON.stringify({ command, arguments: argumentsValue }),
+      timeout: options.timeout || 2 * 60 * 1000,
     });
   }
 
@@ -262,7 +322,7 @@ class BackendManager extends EventEmitter {
     if (this.socket) this.socket.close();
     if (this.ownsBackend) {
       try {
-        await this.command("shutdown");
+        await this.command("shutdown", {}, { timeout: 5000 });
       } catch (_) {}
       await delay(800);
       await this.terminateChildTree();
@@ -271,4 +331,10 @@ class BackendManager extends EventEmitter {
   }
 }
 
-module.exports = { BackendManager, StartCancelledError, backendLaunchSpec };
+module.exports = {
+  BackendManager,
+  StartCancelledError,
+  backendLaunchSpec,
+  createBackendOutputForwarder,
+  parseBackendOutputLine,
+};

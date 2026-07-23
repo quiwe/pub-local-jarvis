@@ -1074,10 +1074,15 @@ def test_monitoring_automatically_manages_ambient_duplex(tmp_path):
             json={"command": "start_monitoring", "arguments": {}},
         )
         assert started.status_code == 200
+        deadline = time.monotonic() + 1.0
+        while not client.get("/api/v1/duplex").json()["active"]:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
         assert [method for method, _ in requests[-2:]] == [
             "start_monitoring",
             "start_duplex",
         ]
+        assert requests[-1][1]["_timeout_seconds"] == 600.0
         status = client.get("/api/v1/duplex").json()
         assert status["active"] is True
         assert status["session_id"] == "jarvis-ambient"
@@ -1096,10 +1101,131 @@ def test_monitoring_automatically_manages_ambient_duplex(tmp_path):
             json={"command": "resume_monitoring", "arguments": {}},
         )
         assert resumed.status_code == 200
+        deadline = time.monotonic() + 1.0
+        while not client.get("/api/v1/duplex").json()["active"]:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
         assert [method for method, _ in requests[-2:]] == [
             "resume_monitoring",
             "start_duplex",
         ]
+
+
+async def test_monitoring_returns_before_ambient_duplex_is_ready(tmp_path, monkeypatch):
+    settings = Settings(
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(sessions_root=tmp_path / "sessions"),
+    )
+    orchestrator = create_app(settings=settings).state.orchestrator
+    await orchestrator.start()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original_request = orchestrator.native_client.request
+
+    async def delayed_duplex(method, payload):
+        if method == "start_duplex":
+            entered.set()
+            await release.wait()
+        return await original_request(method, payload)
+
+    monkeypatch.setattr(orchestrator.native_client, "request", delayed_duplex)
+    try:
+        result = await asyncio.wait_for(
+            orchestrator.command("start_monitoring", {}), timeout=0.2
+        )
+        assert result["method"] == "start_monitoring"
+        await asyncio.wait_for(entered.wait(), timeout=0.2)
+        assert orchestrator.duplex_status()["active"] is False
+        assert orchestrator.events.history("duplex.task.initializing")
+
+        task = orchestrator._ambient_duplex_task
+        assert task is not None
+        release.set()
+        await asyncio.wait_for(task, timeout=0.2)
+
+        assert orchestrator.duplex_status()["active"] is True
+        assert orchestrator.events.history("duplex.task.started")
+    finally:
+        release.set()
+        await orchestrator.stop()
+
+
+async def test_ambient_duplex_failure_stops_monitoring(tmp_path, monkeypatch):
+    settings = Settings(
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(sessions_root=tmp_path / "sessions"),
+    )
+    orchestrator = create_app(settings=settings).state.orchestrator
+    await orchestrator.start()
+    entered = asyncio.Event()
+    fail = asyncio.Event()
+    requests = []
+    original_request = orchestrator.native_client.request
+
+    async def failing_duplex(method, payload):
+        requests.append(method)
+        if method == "start_duplex":
+            entered.set()
+            await fail.wait()
+            raise RuntimeError("not enough GPU memory")
+        return await original_request(method, payload)
+
+    monkeypatch.setattr(orchestrator.native_client, "request", failing_duplex)
+    try:
+        await orchestrator.command("start_monitoring", {})
+        await asyncio.wait_for(entered.wait(), timeout=0.2)
+        task = orchestrator._ambient_duplex_task
+        assert task is not None
+        fail.set()
+        await asyncio.wait_for(task, timeout=0.2)
+
+        failures = orchestrator.events.history("duplex.task.failed")
+        assert failures[-1].payload["error"] == (
+            "环境感知模型初始化失败，请确认可用内存和显存充足后重试"
+        )
+        assert requests[-1] == "stop_monitoring"
+        assert orchestrator.duplex_status()["active"] is False
+    finally:
+        fail.set()
+        await orchestrator.stop()
+
+
+@pytest.mark.parametrize("stop_command", ["pause_monitoring", "stop_monitoring"])
+async def test_stopping_monitoring_cancels_pending_ambient_duplex(
+    tmp_path, monkeypatch, stop_command
+):
+    settings = Settings(
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(sessions_root=tmp_path / "sessions"),
+    )
+    orchestrator = create_app(settings=settings).state.orchestrator
+    await orchestrator.start()
+    entered = asyncio.Event()
+    never_ready = asyncio.Event()
+    requests = []
+    original_request = orchestrator.native_client.request
+
+    async def delayed_duplex(method, payload):
+        requests.append(method)
+        if method == "start_duplex":
+            entered.set()
+            await never_ready.wait()
+        return await original_request(method, payload)
+
+    monkeypatch.setattr(orchestrator.native_client, "request", delayed_duplex)
+    try:
+        await orchestrator.command("start_monitoring", {})
+        await asyncio.wait_for(entered.wait(), timeout=0.2)
+
+        await asyncio.wait_for(orchestrator.command(stop_command, {}), timeout=0.2)
+
+        assert orchestrator._ambient_duplex_task is None
+        assert requests[-1] == stop_command
+        assert orchestrator.duplex_status()["active"] is False
+        assert not orchestrator.events.history("duplex.task.started")
+    finally:
+        never_ready.set()
+        await orchestrator.stop()
 
 
 def test_duplex_model_speak_routing_and_compatibility_api(tmp_path):

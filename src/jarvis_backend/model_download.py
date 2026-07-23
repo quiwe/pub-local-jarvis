@@ -4,11 +4,14 @@ import argparse
 import hashlib
 import json
 import os
+import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from huggingface_hub import snapshot_download as huggingface_snapshot_download
+from tqdm.auto import tqdm
 
 MODEL_REPO_ID = "openbmb/MiniCPM-o-4_5-gguf"
 MODEL_REVISION = "502eec5b03eaee9d0d2ce17a176e3490103c9a63"
@@ -30,11 +33,38 @@ MODEL_FILES = (
     ),
 )
 MODEL_PATTERNS = tuple(item[0] for item in MODEL_FILES)
+MODEL_TOTAL_BYTES = sum(item[1] for item in MODEL_FILES)
 MODEL_MARKER = ".aijarvis-model.json"
 OFFICIAL_ENDPOINT = "https://huggingface.co"
 DEFAULT_MIRROR_ENDPOINT = "https://hf-mirror.com"
 
 SnapshotDownload = Callable[..., Any]
+DownloadProgress = Callable[[int, int], None]
+
+
+def _progress_bar_type(progress: DownloadProgress) -> type[tqdm]:
+    state = {"percent": -1, "reported_at": 0.0}
+    lock = threading.Lock()
+
+    class ModelDownloadProgress(tqdm):
+        def display(self, msg: str | None = None, pos: int | None = None) -> None:
+            # Electron renders the structured callback; suppress terminal control sequences.
+            return None
+
+        def update(self, n: int | float | None = 1) -> bool | None:
+            result = super().update(n)
+            if str(getattr(self, "desc", "")).startswith("Reconstruct"):
+                completed = min(max(int(self.n), 0), MODEL_TOTAL_BYTES)
+                percent = int(completed * 100 / MODEL_TOTAL_BYTES)
+                now = time.monotonic()
+                with lock:
+                    if percent > state["percent"] or now - state["reported_at"] >= 2:
+                        state["percent"] = percent
+                        state["reported_at"] = now
+                        progress(completed, MODEL_TOTAL_BYTES)
+            return result
+
+    return ModelDownloadProgress
 
 
 def model_files_are_valid(local_dir: Path, *, verify_hashes: bool = False) -> bool:
@@ -106,15 +136,19 @@ def download_models(
     mirror_endpoint: str | None = DEFAULT_MIRROR_ENDPOINT,
     snapshot_download: SnapshotDownload | None = None,
     log: Callable[[str], None] = print,
+    progress: DownloadProgress | None = None,
 ) -> str:
     if snapshot_download is None:
         snapshot_download = huggingface_snapshot_download
 
     endpoints = endpoint_candidates(primary_endpoint, mirror_endpoint)
     failures: list[str] = []
+    tqdm_class = _progress_bar_type(progress) if progress else None
+    if progress:
+        progress(0, MODEL_TOTAL_BYTES)
     for index, endpoint in enumerate(endpoints):
-        source_name = "official source" if index == 0 else "mainland China mirror"
-        log(f"Downloading pinned model files from {source_name}: {endpoint}")
+        source_name = "官方源" if index == 0 else "备用镜像"
+        log(f"正在连接模型{source_name}：{endpoint}")
         try:
             snapshot_download(
                 repo_id=MODEL_REPO_ID,
@@ -123,16 +157,22 @@ def download_models(
                 allow_patterns=list(MODEL_PATTERNS),
                 token=token or None,
                 endpoint=endpoint,
+                etag_timeout=30,
+                tqdm_class=tqdm_class,
             )
+            if progress:
+                progress(MODEL_TOTAL_BYTES, MODEL_TOTAL_BYTES)
             return endpoint
         except Exception as error:
             detail = _redact(str(error), token)
             failures.append(detail)
             if index + 1 < len(endpoints):
-                log(f"Official model source failed ({detail}); retrying with the mirror.")
+                if len(detail) > 160:
+                    detail = detail[:157] + "..."
+                log(f"模型官方源连接失败（{detail}），正在切换备用镜像")
 
     raise RuntimeError(
-        f"model download failed from all configured endpoints: {failures[-1]}"
+        f"所有模型下载地址均不可用：{failures[-1]}"
     ) from None
 
 

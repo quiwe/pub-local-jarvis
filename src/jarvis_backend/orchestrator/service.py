@@ -160,6 +160,8 @@ class OrchestrationService:
         )
         self._recent_barrages: deque[tuple[str, float]] = deque(maxlen=12)
         self._barrage_task: asyncio.Task[None] | None = None
+        self._ambient_duplex_task: asyncio.Task[None] | None = None
+        self._monitoring_requested = False
         self._recent_duplex_messages: deque[tuple[str, float]] = deque(maxlen=4)
         self._pet_chat_history: deque[tuple[str, str]] = deque(maxlen=4)
         self._pet_chat_lock = asyncio.Lock()
@@ -200,6 +202,8 @@ class OrchestrationService:
         if self.lifecycle.snapshot.state == LifecycleState.STOPPED:
             return
         await self.lifecycle.transition(LifecycleState.STOPPING)
+        self._monitoring_requested = False
+        await self._cancel_ambient_duplex_start()
         await self._cancel_barrage_sequence()
         await self.supervisor.stop()
         await self.lifecycle.transition(LifecycleState.STOPPED)
@@ -213,32 +217,86 @@ class OrchestrationService:
             )
         if method == "stop_duplex":
             return await self.stop_duplex()
+        if method in {"pause_monitoring", "stop_monitoring"}:
+            self._monitoring_requested = False
+            await self._cancel_ambient_duplex_start()
         result = await self.native_client.request(method, arguments)
         if method in {"start_monitoring", "resume_monitoring"}:
             self._screen_idle = False
-            try:
-                await self.start_duplex(
-                    AMBIENT_DUPLEX_INSTRUCTION,
-                    AMBIENT_DUPLEX_SESSION_ID,
-                )
-            except Exception:
-                await self.native_client.request("stop_monitoring", {})
-                raise
+            self._monitoring_requested = True
+            await self._cancel_ambient_duplex_start()
+            self._ambient_duplex_task = asyncio.create_task(
+                self._initialize_ambient_duplex(),
+                name="jarvis-ambient-duplex-start",
+            )
         elif method in {"pause_monitoring", "stop_monitoring"}:
             self._screen_idle = False
             await self._cancel_barrage_sequence()
-            previous_id = self._duplex_session_id
-            self._duplex_session_id = None
-            self._duplex_instruction = ""
-            self._recent_duplex_messages.clear()
-            self._pending_duplex_fragment = None
-            self._discarding_duplex_fragment = None
+            previous_id = self._clear_duplex_state()
             if previous_id is not None:
                 await self.events.publish(
                     Event("duplex.task.stopped", {"session_id": previous_id})
                 )
         await self.events.publish(Event("command.completed", {"command": method, "result": result}))
         return result
+
+    async def _cancel_ambient_duplex_start(self) -> None:
+        task = self._ambient_duplex_task
+        self._ambient_duplex_task = None
+        if task is None or task is asyncio.current_task():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _initialize_ambient_duplex(self) -> None:
+        task = asyncio.current_task()
+        await self.events.publish(
+            Event(
+                "duplex.task.initializing",
+                {"session_id": AMBIENT_DUPLEX_SESSION_ID},
+            )
+        )
+        try:
+            await self.start_duplex(
+                AMBIENT_DUPLEX_INSTRUCTION,
+                AMBIENT_DUPLEX_SESSION_ID,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if self._ambient_duplex_task is not task or not self._monitoring_requested:
+                return
+            self._monitoring_requested = False
+            logger.exception("ambient duplex initialization failed")
+            message = self._ambient_duplex_error(exc)
+            await self.events.publish(
+                Event(
+                    "duplex.task.failed",
+                    {
+                        "session_id": AMBIENT_DUPLEX_SESSION_ID,
+                        "error": message,
+                    },
+                )
+            )
+            try:
+                await self.native_client.request("stop_monitoring", {})
+            except Exception:
+                logger.exception("failed to stop monitoring after duplex initialization failure")
+        finally:
+            if self._ambient_duplex_task is task:
+                self._ambient_duplex_task = None
+
+    @staticmethod
+    def _ambient_duplex_error(error: Exception) -> str:
+        detail = str(error).casefold()
+        if "timeout" in detail or "timed out" in detail:
+            return "环境感知模型初始化超时，请关闭占用内存或显存的程序后重试"
+        if any(marker in detail for marker in ("gpu", "memory", "显存", "内存")):
+            return "环境感知模型初始化失败，请确认可用内存和显存充足后重试"
+        return "环境感知模型初始化失败，请查看运行日志后重试"
 
     async def pet_chat(self, message: str) -> str:
         cleaned = message.strip()
@@ -813,6 +871,15 @@ class OrchestrationService:
             "instruction": self._duplex_instruction,
         }
 
+    def _clear_duplex_state(self) -> str | None:
+        previous_id = self._duplex_session_id
+        self._duplex_session_id = None
+        self._duplex_instruction = ""
+        self._recent_duplex_messages.clear()
+        self._pending_duplex_fragment = None
+        self._discarding_duplex_fragment = None
+        return previous_id
+
     async def start_duplex(
         self, instruction: str, session_id: str | None = None
     ) -> dict[str, Any]:
@@ -826,14 +893,14 @@ class OrchestrationService:
         if session_id is not None and not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
             raise ValueError("duplex session ID contains unsupported characters")
         if self._duplex_session_id is not None:
-            await self.stop_duplex()
+            await self._stop_duplex_native()
         resolved_id = session_id or f"watch-{uuid4().hex}"
         await self.native_client.request(
             "start_duplex",
             {
                 "session_id": resolved_id,
                 "instruction": cleaned,
-                "_timeout_seconds": 180.0,
+                "_timeout_seconds": 600.0,
             },
         )
         self._duplex_session_id = resolved_id
@@ -850,13 +917,13 @@ class OrchestrationService:
         return self.duplex_status()
 
     async def stop_duplex(self) -> dict[str, Any]:
-        previous_id = self._duplex_session_id
+        self._monitoring_requested = False
+        await self._cancel_ambient_duplex_start()
+        return await self._stop_duplex_native()
+
+    async def _stop_duplex_native(self) -> dict[str, Any]:
+        previous_id = self._clear_duplex_state()
         await self.native_client.request("stop_duplex", {})
-        self._duplex_session_id = None
-        self._duplex_instruction = ""
-        self._recent_duplex_messages.clear()
-        self._pending_duplex_fragment = None
-        self._discarding_duplex_fragment = None
         if previous_id is not None:
             await self.events.publish(
                 Event("duplex.task.stopped", {"session_id": previous_id})

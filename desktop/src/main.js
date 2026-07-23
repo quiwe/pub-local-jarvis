@@ -70,6 +70,7 @@ const state = {
   monitoring: false,
   scene: "other",
   error: null,
+  environmentStatus: "idle",
   screenBlocked: false,
   gameProfile: "我的世界",
 };
@@ -95,10 +96,10 @@ function decryptApiKey(value) {
   return safeStorage.decryptString(Buffer.from(value, "base64"));
 }
 
-async function syncGameProfile() {
+async function syncGameProfile(options = {}) {
   const profile = selectedGameProfile();
   if (manager && (state.phase === "running" || state.phase === "paused" || state.phase === "starting")) {
-    await manager.command("set_game_profile", { name: profile.name, prompt: profile.prompt });
+    await manager.command("set_game_profile", { name: profile.name, prompt: profile.prompt }, options);
   }
   publishState({ gameProfile: profile.name });
   return { selectedId: gameSettings.selectedId, profiles: gameSettings.profiles.map(item => ({ ...item })) };
@@ -472,6 +473,27 @@ async function toggleScreenPrivacy() {
 
 function handleBackendEvent(event) {
   const payload = event && event.payload ? event.payload : {};
+  if (event?.topic === "duplex.task.initializing") {
+    publishState({ environmentStatus: "initializing" });
+    send(launcherWindow, "jarvis:progress", "正在初始化环境感知模型");
+  } else if (event?.topic === "duplex.task.started") {
+    publishState({ environmentStatus: "ready", error: null });
+    send(launcherWindow, "jarvis:progress", "环境感知已就绪");
+    if (state.phase === "running") setTimeout(() => launcherWindow.hide(), 900);
+  } else if (event?.topic === "duplex.task.failed") {
+    const message = payload.error || "环境感知模型初始化失败，请查看运行日志后重试";
+    publishState({
+      phase: "error",
+      monitoring: false,
+      environmentStatus: "error",
+      error: message,
+    });
+    send(launcherWindow, "jarvis:progress", message);
+    launcherWindow.show();
+    showBubble({ text: message, tone: "error", duration: 10000 });
+  } else if (event?.topic === "duplex.task.stopped") {
+    publishState({ environmentStatus: "idle" });
+  }
   if (event && (
     event.topic === "memory.activity.recorded" ||
     event.topic === "memory.day.generated" ||
@@ -514,25 +536,29 @@ async function startJarvis() {
   if (startPromise) return startPromise;
   startPromise = (async () => {
     startController = new AbortController();
-    publishState({ phase: "starting", error: null });
+    publishState({ phase: "starting", environmentStatus: "initializing", error: null });
     try {
       await manager.start({ signal: startController.signal });
-      await syncGameProfile();
-      await manager.command("start_monitoring");
+      await syncGameProfile({ timeout: 3 * 60 * 1000 });
+      await manager.command("start_monitoring", {}, { timeout: 3 * 60 * 1000 });
       publishState({ phase: "running", monitoring: true, screenBlocked: false, error: null });
       setScene("other");
-      showBubble({ text: "AI 贾维斯已启动，正在持续理解当前画面。", tone: "success" });
-      setTimeout(() => launcherWindow.hide(), 900);
+      showBubble({ text: "基础监控已启动，正在初始化环境感知模型。", tone: "success" });
+      if (state.environmentStatus === "ready") setTimeout(() => launcherWindow.hide(), 900);
       if (process.env.JARVIS_DESKTOP_DEMO === "1") runDemo();
       return { ...state };
     } catch (error) {
       if (error instanceof StartCancelledError || startController.signal.aborted) {
-        publishState({ phase: "idle", monitoring: false, error: null });
+        publishState({ phase: "idle", monitoring: false, environmentStatus: "idle", error: null });
         return { ...state };
       }
-      publishState({ phase: "error", monitoring: false, error: error.message });
+      const message = error?.name === "TimeoutError"
+        || /aborted due to timeout/i.test(String(error?.message || ""))
+        ? "本地模型启动超时，请保持程序打开并重新点击启动"
+        : String(error?.message || "启动失败");
+      publishState({ phase: "error", monitoring: false, environmentStatus: "error", error: message });
       launcherWindow.show();
-      throw error;
+      throw new Error(message);
     } finally {
       startController = null;
       startPromise = null;
@@ -546,7 +572,7 @@ async function cancelStart() {
   startController.abort();
   await manager.cancelStart();
   send(launcherWindow, "jarvis:progress", "启动已取消");
-  publishState({ phase: "idle", monitoring: false, error: null });
+  publishState({ phase: "idle", monitoring: false, environmentStatus: "idle", error: null });
   return { ...state };
 }
 
@@ -558,7 +584,7 @@ async function pauseMonitoring() {
   barrageWindow.hide();
   if (petChatVisible) petWindow.show();
   else petWindow.hide();
-  publishState({ phase: "paused", monitoring: false, screenBlocked: false });
+  publishState({ phase: "paused", monitoring: false, environmentStatus: "idle", screenBlocked: false });
   return { ...state };
 }
 

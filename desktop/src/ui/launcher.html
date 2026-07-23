@@ -37,6 +37,15 @@
             <p class="section-kicker">系统状态</p>
             <p id="status-title" class="status-title">系统处于待命状态</p>
             <p id="status-detail" class="status-detail">启动后将连接本地模型，持续理解屏幕与系统声音。</p>
+            <div id="startup-progress" class="startup-progress" hidden>
+              <div class="startup-progress-meta">
+                <span id="startup-progress-label">正在检查本地模型</span>
+                <output id="startup-progress-value">准备中</output>
+              </div>
+              <div id="startup-progress-track" class="startup-progress-track indeterminate" role="progressbar" aria-label="启动进度" aria-valuemin="0" aria-valuemax="100">
+                <span id="startup-progress-bar"></span>
+              </div>
+            </div>
             <span class="privacy"><i data-lucide="shield-check"></i> 数据留在本机</span>
           </div>
           <div class="pulse-orbit" aria-hidden="true">
