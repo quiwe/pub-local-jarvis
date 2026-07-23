@@ -460,7 +460,7 @@ scene_evidence 必须逐项判断 game_surface、interactive_gameplay、game_vid
 字段归属：
 - game：必须先输出 observation，再输出恰好 3 条非空、各不超过 30 字的 barrage_candidates。每条弹幕都必须直接复用或明确指向 observation 中至少一个具体主体、动作、资源、威胁、位置、状态或结果；去掉角色口吻后，仍应能看出它只适用于本轮画面。三个角度优先分别关注当前动作或结果、可见资源或威胁、相对最近观察的明确变化；某个角度没有可靠证据时改用另一个可见事实，禁止补猜。禁止输出脱离具体对象和原因的“稳住推进”“注意走位”“保持节奏”“看清局势”“注意资源”“小心敌人”等通用攻略句。若提供了游戏陪伴方案，角色身份、称呼、语气、口头习惯和表达禁忌只负责如何表达，绝不能添加 observation 中没有的事实；每条都必须让人能明显辨认出该角色。方案要求嘴臭、毒舌或吐槽时，以有画面依据的角色化点评为主，只针对当下操作和局势，不攻击身份、能力或外貌。局势稳定时也应针对一个可见细节具体点评；不要照抄画面文字。课程字段、capture_keyframe、keyframe_note 和 assistant_message 保持空值。
 - course：course_transcript 转写本轮清晰可辨的新增授课语音，排除重复、音乐和闲聊；有清晰授课语音时不得无故留空。course_note 根据本轮可靠画面和转写提炼一条包含定义、条件、因果、公式、步骤、例子或易错点的完整知识结论。course_interaction 根据可靠新增知识生成一条 8 至 50 字的具体联系、前提、适用条件或易错提醒；出现明确知识内容时不得留空。课程开场、寒暄、版本与安排或娱乐闲聊不算知识点。capture_keyframe 只在清晰且可独立复习的新公式、图表、代码、原文、完整例题、流程或实验结果出现时为 true，并填写 keyframe_note。
-- other：只填写 scene、confidence、scene_evidence 和 observation，其他场景内容保持空值。普通主动文本完全由独立的原生全双工会话决定，assistant_message 必须为空。
+- other：填写 scene、confidence、scene_evidence 和 observation，并在画面信息清晰时填写 assistant_message。assistant_message 必须是 8 至 40 个汉字的一句自然点评、具体建议或克制吐槽，不得机械复述界面，不得使用“画面显示”“你正在”“需要我”“要不要我”，不得提问或编造屏幕外事实；只有画面模糊、信息不足或相对最近观察没有任何可说的新内容时才留空。其他场景字段保持空值。
 
 输出前检查所有固定字段均存在、scene 与字段归属一致、JSON 类型和转义正确。)";
 
@@ -589,7 +589,7 @@ bool Worker::start(const std::string& model_path) {
                 value["capture_keyframe"] = false;
                 value["keyframe_note"] = "";
               }
-              value["assistant_message"] = "";
+              if (normalized_scene != "other") value["assistant_message"] = "";
               previous_scene_ = validated_scene_for_prompt(value);
 
               RecentPerception perception;

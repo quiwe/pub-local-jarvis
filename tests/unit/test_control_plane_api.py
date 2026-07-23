@@ -384,7 +384,12 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
         )
         time.sleep(0.02)
         events = client.get("/api/v1/events").json()
-        assert not any(event["topic"] == "assistant.message" for event in events)
+        assistant_messages = [
+            event["payload"]["text"]
+            for event in events
+            if event["topic"] == "assistant.message"
+        ]
+        assert assistant_messages == ["新场景已经稳定，可以按刚才的目标继续推进。"]
 
 
 async def test_display_scene_uses_configured_entry_and_exit_samples(tmp_path):
@@ -1028,7 +1033,7 @@ def test_game_barrage_near_duplicate_recovers_before_exact_repeat(tmp_path):
         assert generated == ["漂亮操作，完成反杀！", "反杀完成，这操作漂亮！"]
 
 
-def test_structured_perception_never_emits_ordinary_assistant_message(tmp_path):
+def test_structured_perception_emits_grounded_ordinary_assistant_message(tmp_path):
     with make_client(tmp_path) as client:
         native = client.app.state.orchestrator.native_client
         client.portal.call(
@@ -1040,7 +1045,7 @@ def test_structured_perception_never_emits_ordinary_assistant_message(tmp_path):
                     {
                         "scene": "other",
                         "confidence": 0.9,
-                        "assistant_message": "切到文档了，思路开始落地。",
+                        "assistant_message": "这段说明把关键边界交代得很清楚。",
                         "assistant_candidates": ["搜索结束，准备认真读了。"],
                     },
                     ensure_ascii=False,
@@ -1050,11 +1055,17 @@ def test_structured_perception_never_emits_ordinary_assistant_message(tmp_path):
         time.sleep(0.03)
 
         messages = [
-            event["payload"]["text"]
+            event["payload"]
             for event in client.get("/api/v1/events").json()
             if event["topic"] == "assistant.message"
         ]
-        assert messages == []
+        assert messages == [
+            {
+                "text": "这段说明把关键边界交代得很清楚。",
+                "source": "perception",
+                "confidence": 0.9,
+            }
+        ]
 
 
 def test_monitoring_automatically_manages_ambient_duplex(tmp_path):
@@ -1086,7 +1097,7 @@ def test_monitoring_automatically_manages_ambient_duplex(tmp_path):
         status = client.get("/api/v1/duplex").json()
         assert status["active"] is True
         assert status["session_id"] == "jarvis-ambient"
-        assert "默认保持安静" in status["instruction"]
+        assert "应适度主动说一句自然点评" in status["instruction"]
 
         paused = client.post(
             "/api/v1/commands",
@@ -1738,6 +1749,7 @@ def test_ambient_duplex_rejects_routine_fragments_and_accepts_grounded_comment(t
                 "已经进入“概览”页，开始查看",
                 "应用信息了。",
                 "新闻页面介绍的是示例主题。",
+                "这段实现把状态切换和后端命令分开了，交互会顺手很多。",
                 "这里的端口配置值得先核对连接目标。",
                 "构建失败：链接器找不到入口符号。",
             ],
@@ -1761,6 +1773,11 @@ def test_ambient_duplex_rejects_routine_fragments_and_accepts_grounded_comment(t
             if event["topic"] == "assistant.message"
         ]
         assert messages == [
+            {
+                "text": "这段实现把状态切换和后端命令分开了，交互会顺手很多。",
+                "source": "duplex",
+                "session_id": "jarvis-ambient",
+            },
             {
                 "text": "这里的端口配置值得先核对连接目标。",
                 "source": "duplex",

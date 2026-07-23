@@ -48,8 +48,8 @@ AMBIENT_DUPLEX_INSTRUCTION = (
     "消失的主题或细节。窗口、页面或任务切换后，立即放弃旧主题；例如当前主体是代码编辑器"
     "时，禁止谈论先前网页、新闻或视频。无法用最近画面中的具体对象、文字、动作或状态支撑"
     "整句话时必须保持安静，禁止用常识补全看不清的标题、人物、事件、原因或结论。"
-    "默认保持安静，但在画面出现有意义的变化、明确细节或"
-    "值得回应的内容时可以适度主动说话。普通网页和视频"
+    "只有画面没有有意义的变化、缺少明确细节或内容不可靠时才保持安静；只要当前画面有"
+    "清晰、具体的内容，就应适度主动说一句自然点评，不需要等到报错、风险或任务完成。普通网页和视频"
     "同样可以主动回应：视频先连续观察至少 2 至 3 个时间片，结合画面主体、动作、场景、"
     "字幕和系统音频理解实际内容；形成可靠理解后及时说一句，不要只根据首帧、标题或局部"
     "控件猜测。连续视频中不必只说一次；每当主体动作、场景、话题或结论发生明确变化时"
@@ -64,8 +64,8 @@ AMBIENT_DUPLEX_INSTRUCTION = (
     "反复出现的问题。调侃和毒舌必须有画面依据，只针对事情，不攻击用户本人，不挖苦身份、"
     "能力或外貌。直接说建议、提醒或点评，不要以“画面显示”“视频开始”“你正在”“当前是”"
     "等解释性句式开头，也不要输出“建议”“提醒”“调侃”“毒舌”等风格标签。"
-    "每条发言必须至少包含建议、提醒、调侃或轻度毒舌中的一种；如果只能陈述画面事实就保持"
-    "安静。以下例句只示范表达方式，不是当前画面事实：看到公式可说“先记住适用条件，后面"
+    "每条发言应包含建议、提醒、调侃、轻度毒舌或对明确内容的自然回应中的一种；可以基于"
+    "清晰可见的事实做简短点评，但不要机械复述界面。以下例句只示范表达方式，不是当前画面事实：看到公式可说“先记住适用条件，后面"
     "的题能少踩一个坑。”；标签页过多可说“标签页都快组团出道了，主线任务还没露面。”；"
     "同一报错反复出现可说“同一个报错看第三遍也不会自己消失，先看第一条堆栈。”"
     "例如观察到下载明确完成可说“下载完成了，文件可以直接用了”；观察到构建失败且错误"
@@ -164,6 +164,7 @@ class OrchestrationService:
         self._ambient_duplex_task: asyncio.Task[None] | None = None
         self._monitoring_requested = False
         self._recent_duplex_messages: deque[tuple[str, float]] = deque(maxlen=4)
+        self._recent_assistant_messages: deque[tuple[str, float]] = deque(maxlen=6)
         self._pet_chat_history: deque[tuple[str, str]] = deque(maxlen=4)
         self._pet_chat_lock = asyncio.Lock()
         self._pending_duplex_fragment: tuple[str | None, str, float] | None = None
@@ -1148,7 +1149,7 @@ class OrchestrationService:
                 return
             text = self._clean_duplex_message(
                 assembled,
-                require_proactive_value=session_id == AMBIENT_DUPLEX_SESSION_ID,
+                require_proactive_value=False,
             )
             if not text:
                 return
@@ -1162,6 +1163,7 @@ class OrchestrationService:
             ):
                 return
             self._recent_duplex_messages.append((text, now))
+            self._recent_assistant_messages.append((text, now))
             await self.events.publish(
                 Event(
                     "assistant.message",
@@ -1525,6 +1527,8 @@ class OrchestrationService:
 
         await self._record_memory_activity(result, now)
         await self.events.publish(Event("perception.completed", result))
+        if scene == "other" and display_scene == "other":
+            await self._emit_ordinary_perception_message(result, now)
         if scene != "game" or display_scene != "game":
             await self._cancel_barrage_sequence()
         elif available_candidates:
@@ -1562,6 +1566,40 @@ class OrchestrationService:
                 and outside_course_long_enough
             ):
                 await self._finish_auto_course()
+
+    async def _emit_ordinary_perception_message(
+        self, result: dict[str, Any], now: float
+    ) -> None:
+        cooldown = self.settings.interaction.ordinary_bubble_cooldown_seconds
+        history_window = max(60.0, cooldown * 3)
+        while self._recent_assistant_messages and (
+            now - self._recent_assistant_messages[0][1] >= history_window
+        ):
+            self._recent_assistant_messages.popleft()
+        if self._recent_assistant_messages and (
+            now - self._recent_assistant_messages[-1][1] < cooldown
+        ):
+            return
+        message = self._clean_duplex_message(
+            str(result.get("assistant_message", "")),
+            require_proactive_value=False,
+        )
+        if not message or any(
+            _texts_are_similar(message, previous)
+            for previous, _ in self._recent_assistant_messages
+        ):
+            return
+        self._recent_assistant_messages.append((message, now))
+        await self.events.publish(
+            Event(
+                "assistant.message",
+                {
+                    "text": message,
+                    "source": "perception",
+                    "confidence": result["confidence"],
+                },
+            )
+        )
 
     async def _handle_confirmed_course_perception(
         self, result: dict[str, Any], now: float
