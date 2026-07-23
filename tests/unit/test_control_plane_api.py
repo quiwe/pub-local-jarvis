@@ -414,6 +414,30 @@ async def test_display_scene_uses_configured_entry_and_exit_samples(tmp_path):
     assert await perceive("other") == "other"
 
 
+def test_non_game_launcher_evidence_cannot_enter_game_scene():
+    result = service_module.OrchestrationService._parse_perception(
+        json.dumps(
+            {
+                "scene": "game",
+                "confidence": 0.99,
+                "scene_evidence": {
+                    "game_surface": True,
+                    "interactive_gameplay": True,
+                    "game_video_or_stream": False,
+                    "fullscreen_game_media": False,
+                    "non_game_surface": True,
+                },
+                "observation": "Steam 游戏库已打开，但游戏尚未启动",
+                "barrage_candidates": ["准备开打"],
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    assert result["scene"] == "other"
+    assert result["barrage_candidates"] == []
+
+
 async def test_game_classification_switches_scene_before_barrage_generation(tmp_path):
     settings = Settings(
         memory=MemorySettings(root=tmp_path / "memory"),

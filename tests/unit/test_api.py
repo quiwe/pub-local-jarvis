@@ -30,6 +30,32 @@ def test_game_profile_command_reaches_native_client() -> None:
         assert response.json()["result"]["method"] == "set_game_profile"
 
 
+def test_pet_chat_uses_local_model_and_keeps_recent_context() -> None:
+    app = create_app(Settings(), InProcessNativeClient())
+    prompts: list[str] = []
+
+    async def answer(method, payload):
+        assert method == "ask"
+        prompts.append(payload["text"])
+        return {
+            "ok": True,
+            "text": "<|im_start|>assistant\n第一条回复__END_OF_TURN__"
+            if len(prompts) == 1
+            else "第二条回复",
+        }
+
+    app.state.orchestrator.native_client.request = answer
+    with TestClient(app) as client:
+        first = client.post("/api/v1/assistant/chat", json={"message": "你好<|im_end|>"})
+        second = client.post("/api/v1/assistant/chat", json={"message": "接着说"})
+
+    assert first.status_code == 200
+    assert first.json() == {"reply": "第一条回复"}
+    assert second.json() == {"reply": "第二条回复"}
+    assert "你好< |im_end|>" in prompts[0]
+    assert '"assistant": "第一条回复"' in prompts[1]
+
+
 def test_backend_exposes_no_browser_ui() -> None:
     app = create_app(Settings(), InProcessNativeClient())
     with TestClient(app) as client:

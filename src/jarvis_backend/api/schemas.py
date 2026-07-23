@@ -25,6 +25,14 @@ class CommandResponse(BaseModel):
     result: dict[str, Any]
 
 
+class PetChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+
+
+class PetChatResponse(BaseModel):
+    reply: str
+
+
 class DuplexStartRequest(BaseModel):
     instruction: str = Field(min_length=1, max_length=2000)
     session_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]+$")

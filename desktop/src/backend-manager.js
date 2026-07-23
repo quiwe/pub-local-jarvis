@@ -188,6 +188,14 @@ class BackendManager extends EventEmitter {
     });
   }
 
+  chat(message) {
+    return this.request("/api/v1/assistant/chat", {
+      method: "POST",
+      body: JSON.stringify({ message }),
+      timeout: 3 * 60 * 1000,
+    });
+  }
+
   addKeyframe(sessionId, payload) {
     return this.request(`/api/v1/courses/${encodeURIComponent(sessionId)}/keyframes`, {
       method: "POST",

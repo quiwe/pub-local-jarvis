@@ -7,6 +7,7 @@ const {
   Menu,
   Tray,
   desktopCapturer,
+  globalShortcut,
   ipcMain,
   nativeImage,
   safeStorage,
@@ -18,6 +19,7 @@ const { presentBarrageWindow } = require("./barrage-overlay");
 const { routeBackendEvent } = require("./event-router");
 const { displayForWindow, sourceForDisplay } = require("./pet-display");
 const { isPetPointerInteractive } = require("./pet-hit-test");
+const { moveWithinWorkArea, resizeAroundBottomRight } = require("./pet-window");
 const { randomPrivacyDelay, randomPrivacyMessage } = require("./privacy-mode");
 const { resolveDisplayScene } = require("./scene-policy");
 const {
@@ -51,14 +53,18 @@ let quitting = false;
 let bubbleTimer = null;
 let privacyMessageTimer = null;
 let petHitTestTimer = null;
+let petDragTimer = null;
 let petMouseInteractive = false;
 let petBubbleVisible = false;
+let petChatVisible = false;
 let gameSettings = defaultSettings();
 let gameSettingsPath = "";
 let imageSettingsPath = "";
 let imageSettings = { baseUrl: "", modelName: "", apiKey: "" };
 let activeCourseSessionId = null;
 const pendingCaptures = new Set();
+const PET_COMPACT_SIZE = Object.freeze({ width: 390, height: 300 });
+const PET_CHAT_SIZE = Object.freeze({ width: 540, height: 360 });
 const state = {
   phase: "idle",
   monitoring: false,
@@ -144,8 +150,7 @@ function createLauncherWindow() {
 
 function createPetWindow() {
   const workArea = screen.getPrimaryDisplay().workArea;
-  const width = 390;
-  const height = 300;
+  const { width, height } = PET_COMPACT_SIZE;
   petWindow = new BrowserWindow({
     width,
     height,
@@ -175,7 +180,76 @@ function createPetWindow() {
   petWindow.setContentProtection(false);
   petWindow.setIgnoreMouseEvents(true, { forward: true });
   petWindow.loadFile(path.join(__dirname, "ui", "pet.html"));
+  petWindow.webContents.on("did-finish-load", () => {
+    send(petWindow, "jarvis:pet-chat-visibility", petChatVisible);
+  });
   petHitTestTimer = setInterval(updatePetMouseInteraction, 50);
+}
+
+function resizePetWindow(expanded) {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  const bounds = petWindow.getBounds();
+  const display = screen.getDisplayMatching(bounds);
+  const size = expanded ? PET_CHAT_SIZE : PET_COMPACT_SIZE;
+  petWindow.setBounds(
+    resizeAroundBottomRight(bounds, size.width, size.height, display.workArea),
+    false
+  );
+}
+
+function setPetChatVisible(visible) {
+  if (!petWindow || petWindow.isDestroyed()) return false;
+  const nextVisible = Boolean(visible);
+  if (nextVisible !== petChatVisible) {
+    petChatVisible = nextVisible;
+    resizePetWindow(petChatVisible);
+  }
+  send(petWindow, "jarvis:pet-chat-visibility", petChatVisible);
+  if (petChatVisible) {
+    petMouseInteractive = true;
+    petWindow.setIgnoreMouseEvents(false);
+    petWindow.show();
+    petWindow.focus();
+  } else if (state.scene === "game" && state.monitoring && !state.screenBlocked) {
+    petWindow.hide();
+  } else if (state.monitoring) {
+    petWindow.showInactive();
+  } else {
+    petWindow.hide();
+  }
+  return petChatVisible;
+}
+
+function togglePetChat() {
+  return setPetChatVisible(!petChatVisible);
+}
+
+function startPetDrag(event) {
+  if (!petWindow || petWindow.isDestroyed() || event.sender !== petWindow.webContents) return;
+  clearInterval(petDragTimer);
+  const startPoint = screen.getCursorScreenPoint();
+  const startBounds = petWindow.getBounds();
+  const workArea = screen.getDisplayNearestPoint(startPoint).workArea;
+  petMouseInteractive = true;
+  petWindow.setIgnoreMouseEvents(false);
+  petDragTimer = setInterval(() => {
+    if (!petWindow || petWindow.isDestroyed()) return stopPetDrag();
+    const point = screen.getCursorScreenPoint();
+    petWindow.setBounds(
+      moveWithinWorkArea(
+        startBounds,
+        point.x - startPoint.x,
+        point.y - startPoint.y,
+        workArea
+      ),
+      false
+    );
+  }, 16);
+}
+
+function stopPetDrag() {
+  clearInterval(petDragTimer);
+  petDragTimer = null;
 }
 
 function updatePetMouseInteraction() {
@@ -185,7 +259,7 @@ function updatePetMouseInteraction() {
   const localX = point.x - bounds.x;
   const localY = point.y - bounds.y;
   const interactive = isPetPointerInteractive(
-    localX, localY, bounds.width, bounds.height, petBubbleVisible
+    localX, localY, bounds.width, bounds.height, petBubbleVisible, petChatVisible
   );
   if (interactive === petMouseInteractive) return;
   petMouseInteractive = interactive;
@@ -268,7 +342,7 @@ function setScene(sceneValue) {
     return;
   }
   if (scene === "game") {
-    if (petWindow.isVisible()) petWindow.hide();
+    if (!petChatVisible && petWindow.isVisible()) petWindow.hide();
     showBarrage();
     if (previousScene !== "game") {
       showBarrage(`已加载《${selectedGameProfile().name}》游戏方案`);
@@ -461,7 +535,8 @@ async function pauseMonitoring() {
   clearTimeout(privacyMessageTimer);
   send(petWindow, "jarvis:screen-privacy", false);
   barrageWindow.hide();
-  petWindow.hide();
+  if (petChatVisible) petWindow.show();
+  else petWindow.hide();
   publishState({ phase: "paused", monitoring: false, screenBlocked: false });
   return { ...state };
 }
@@ -538,6 +613,23 @@ function registerIpc() {
     if (!petWindow || event.sender !== petWindow.webContents) return { ...state };
     return toggleScreenPrivacy();
   });
+  ipcMain.handle("jarvis:pet-chat", (event, message) => {
+    if (!petWindow || event.sender !== petWindow.webContents) {
+      throw new Error("桌宠聊天请求来源无效");
+    }
+    if (state.phase !== "running" && state.phase !== "paused") {
+      throw new Error("请先启动 AI Jarvis，再与模型对话");
+    }
+    return manager.chat(String(message || ""));
+  });
+  ipcMain.handle("jarvis:set-pet-chat-visible", (event, visible) => {
+    if (!petWindow || event.sender !== petWindow.webContents) return false;
+    return setPetChatVisible(visible);
+  });
+  ipcMain.on("jarvis:pet-drag-start", startPetDrag);
+  ipcMain.on("jarvis:pet-drag-stop", event => {
+    if (petWindow && event.sender === petWindow.webContents) stopPetDrag();
+  });
   ipcMain.handle("jarvis:open-output", async (_event, outputPath) => {
     if (typeof outputPath === "string" && outputPath) shell.showItemInFolder(outputPath);
   });
@@ -559,6 +651,9 @@ app.whenReady().then(() => {
   createBarrageWindow();
   createTray();
   registerIpc();
+  if (!globalShortcut.register("CommandOrControl+M", togglePetChat)) {
+    send(launcherWindow, "jarvis:progress", "快捷键 Ctrl + M 注册失败，可能已被其他应用占用");
+  }
 });
 
 app.on("activate", () => launcherWindow && launcherWindow.show());
@@ -572,7 +667,9 @@ app.on("before-quit", event => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
+  globalShortcut.unregisterAll();
   clearInterval(petHitTestTimer);
+  stopPetDrag();
   clearTimeout(privacyMessageTimer);
   Promise.resolve(manager && manager.stop()).finally(() => {
     if (tray) tray.destroy();

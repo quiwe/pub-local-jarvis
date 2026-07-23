@@ -8,9 +8,14 @@
     course: "../../assets/pet/course.gif",
   });
 
-  function resolvePetState({ screenBlocked = false, bubbleVisible = false, scene = "other" } = {}) {
+  function resolvePetState({
+    screenBlocked = false,
+    bubbleVisible = false,
+    chatVisible = false,
+    scene = "other",
+  } = {}) {
     if (screenBlocked) return "closed";
-    if (bubbleVisible) return "normal";
+    if (bubbleVisible || chatVisible) return "normal";
     if (scene === "course") return "course";
     return "idle";
   }

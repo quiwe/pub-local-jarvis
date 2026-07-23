@@ -15,3 +15,9 @@ test("bubble accepts input only while it is visible", () => {
   assert.equal(isPetPointerInteractive(100, 60, 390, 300, false), false);
   assert.equal(isPetPointerInteractive(300, 60, 390, 300, true), false);
 });
+
+test("expanded chat accepts input only inside the chat panel", () => {
+  assert.equal(isPetPointerInteractive(180, 120, 540, 360, false, true), true);
+  assert.equal(isPetPointerInteractive(180, 120, 540, 360, false, false), false);
+  assert.equal(isPetPointerInteractive(400, 40, 540, 360, false, true), false);
+});

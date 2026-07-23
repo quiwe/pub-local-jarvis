@@ -17,6 +17,7 @@ from .protocol import (
     Frame,
     MessageType,
     ProtocolError,
+    StatusCode,
     decode_frame,
     encode_frame,
     json_payload,
@@ -197,7 +198,12 @@ class NamedPipeNativeClient(NativeClient):
                     message = str(data.get("error", "native worker error"))
                     pending.set_exception(RuntimeError(message))
                 elif frame.message_type == MessageType.STATUS and pending:
-                    if frame.request_id not in self._result_requests:
+                    if (
+                        frame.request_id in self._result_requests
+                        and frame.flags == StatusCode.CANCELLED
+                    ):
+                        pending.set_exception(RuntimeError("native inference was cancelled"))
+                    elif frame.request_id not in self._result_requests:
                         pending.set_result(data)
                 elif frame.message_type == MessageType.RESULT and pending:
                     pending.set_result(data)

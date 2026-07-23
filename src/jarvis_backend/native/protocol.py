@@ -32,6 +32,15 @@ class MessageType(IntEnum):
     STOP_DUPLEX = 12
 
 
+class StatusCode(IntEnum):
+    OK = 0
+    MALFORMED = 1
+    UNSUPPORTED_VERSION = 2
+    UNAVAILABLE = 3
+    CANCELLED = 4
+    INTERNAL_ERROR = 5
+
+
 @dataclass(frozen=True, slots=True)
 class Frame:
     message_type: MessageType

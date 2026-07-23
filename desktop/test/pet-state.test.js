@@ -6,11 +6,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { PET_ANIMATIONS, resolvePetState } = require("../src/pet-state");
 
-test("pet state priority is privacy, bubble, course, then idle", () => {
+test("pet state priority is privacy, conversation, course, then idle", () => {
   assert.equal(resolvePetState(), "idle");
   assert.equal(resolvePetState({ scene: "course" }), "course");
   assert.equal(resolvePetState({ scene: "course", bubbleVisible: true }), "normal");
   assert.equal(resolvePetState({ bubbleVisible: true }), "normal");
+  assert.equal(resolvePetState({ scene: "course", chatVisible: true }), "normal");
   assert.equal(resolvePetState({
     scene: "course",
     bubbleVisible: true,

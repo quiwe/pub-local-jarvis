@@ -26,6 +26,8 @@ from .schemas import (
     MemoryImageResponse,
     MemoryStatusResponse,
     MemorySummaryResponse,
+    PetChatRequest,
+    PetChatResponse,
     SceneObservation,
     SceneResponse,
 )
@@ -59,6 +61,20 @@ async def health(request: Request) -> HealthResponse:
 async def command(body: CommandRequest, request: Request) -> CommandResponse:
     result = await service(request).command(body.command, body.arguments)
     return CommandResponse(accepted=True, result=result)
+
+
+@router.post("/assistant/chat", response_model=PetChatResponse)
+async def pet_chat(body: PetChatRequest, request: Request) -> PetChatResponse:
+    try:
+        reply = await service(request).pet_chat(body.message)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    except (RuntimeError, TimeoutError) as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "本地模型暂时无法回复，请稍后重试",
+        ) from exc
+    return PetChatResponse(reply=reply)
 
 
 @router.get("/duplex", response_model=DuplexStatusResponse)

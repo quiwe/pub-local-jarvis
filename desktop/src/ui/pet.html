@@ -8,6 +8,19 @@
   <link rel="stylesheet" href="pet.css">
 </head>
 <body>
+  <section id="pet-chat" class="pet-chat interactive" aria-label="与 JARVIS 对话" hidden>
+    <header class="chat-head">
+      <div class="chat-identity"><span class="signal-dot"></span><strong>JARVIS</strong><span>对话</span></div>
+      <button id="chat-close" class="chat-close" type="button" title="关闭对话" aria-label="关闭对话">&times;</button>
+    </header>
+    <div id="chat-messages" class="chat-messages" role="log" aria-live="polite"></div>
+    <form id="chat-form" class="chat-form">
+      <label class="sr-only" for="chat-input">消息</label>
+      <textarea id="chat-input" maxlength="2000" rows="1" placeholder="输入消息"></textarea>
+      <button id="chat-send" type="submit">发送</button>
+    </form>
+  </section>
+
   <div id="bubble" class="speech-bubble interactive" role="status" hidden>
     <div class="bubble-head"><span class="signal-dot"></span><strong>JARVIS</strong></div>
     <p id="bubble-text"></p>

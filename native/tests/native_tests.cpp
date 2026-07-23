@@ -6,6 +6,7 @@
 #include "jarvis/worker.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -24,6 +25,27 @@ namespace {
 void require(bool value, const char* message) { if (!value) { std::cerr << "FAIL: " << message << '\n'; std::exit(1); } }
 std::span<const std::byte> bytes(const char* value, std::size_t size) {
   return {reinterpret_cast<const std::byte*>(value), size};
+}
+bool has_unified_perception_schema(const std::string& text) {
+  return text.starts_with('{') && text.ends_with('}') &&
+         std::ranges::all_of(
+             std::array{std::string_view("\"scene\":"),
+                        std::string_view("\"confidence\":"),
+                        std::string_view("\"scene_evidence\":"),
+                        std::string_view("\"observation\":"),
+                        std::string_view("\"barrage_candidates\":"),
+                        std::string_view("\"course_transcript\":"),
+                        std::string_view("\"course_note\":"),
+                        std::string_view("\"course_title\":"),
+                        std::string_view("\"course_interaction\":"),
+                        std::string_view("\"capture_keyframe\":"),
+                        std::string_view("\"keyframe_note\":"),
+                        std::string_view("\"assistant_message\":"),
+                        std::string_view("\"barrage_pending\":"),
+                        std::string_view("\"classification_recovered\":"),
+                        std::string_view("\"barrage_source\":"),
+                        std::string_view("\"barrage_fallback_reason\":")},
+             [&text](std::string_view field) { return text.find(field) != std::string::npos; });
 }
 class BlockingRuntime final : public jarvis::IOmniRuntime {
  public:
@@ -66,14 +88,14 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
       max_output_tokens_[request.id] = request.max_output_tokens;
     }
     changed_.notify_all();
-    if (request.prompt.find("场景分类与客观信息提取器") != std::string::npos &&
-        request.prompt.find("不得生成游戏弹幕") != std::string::npos) {
+    if (request.prompt.find("统一实时感知器") != std::string::npos &&
+        request.prompt.find("上一轮已验证场景是 game") == std::string::npos) {
       return {request.id,
               R"({"scene":"game","confidence":0.9,"scene_evidence":{"game_surface":true,"interactive_gameplay":true,"game_video_or_stream":false,"fullscreen_game_media":false,"non_game_surface":false},"observation":"玩家正在进行测试游戏")",
               false};
     }
     return {request.id,
-            R"({"barrage_candidates":[]})",
+            R"({"scene":"game","confidence":0.92,"scene_evidence":{"game_surface":true,"interactive_gameplay":true,"game_video_or_stream":false,"fullscreen_game_media":false,"active_instruction":false,"course_surface":false,"instructional_audio":false,"ordinary_browsing":false,"non_game_surface":false},"observation":"玩家继续推进并观察资源","barrage_candidates":["长官，路线清楚了，稳住推进","资源够用，这波节奏别断","视野打开了，先盯住侧面"],"course_transcript":"","course_note":"","course_title":"","course_interaction":"","capture_keyframe":false,"keyframe_note":"","assistant_message":""})",
             false};
   }
   bool start_duplex(std::string instruction) override {
@@ -126,11 +148,11 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
   }
   bool received_perception() {
     std::lock_guard lock(mutex_);
-    bool clean_classification = false;
-    bool profiled_game_generation = false;
+    bool isolated_profile_on_initial_game = false;
+    bool profiled_game_continuity = false;
     for (const auto& [id, prompt] : prompts_) {
       if (id < (std::uint64_t{1} << 63U)) continue;
-      if (prompt.find("不得生成游戏弹幕") != std::string::npos &&
+      if (prompt.find("统一实时感知器") != std::string::npos &&
           prompt.find("场景判定") != std::string::npos &&
           prompt.find("scene_evidence") != std::string::npos &&
           prompt.find("game_surface") != std::string::npos &&
@@ -145,39 +167,43 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
           prompt.find("结合两种模态交叉验证") != std::string::npos &&
           prompt.find("普通主动文本完全由独立的原生全双工会话决定") !=
               std::string::npos &&
-          prompt.find("assistant_candidates") == std::string::npos &&
-          prompt.find("<game_profile>") == std::string::npos &&
-          prompt.find("关注生存资源") == std::string::npos) {
-        clean_classification = true;
+          prompt.find("barrage_candidates") != std::string::npos &&
+          prompt.find("assistant_message") != std::string::npos &&
+          prompt.find("Steam 等游戏启动器") != std::string::npos &&
+          prompt.find("上一轮已验证场景是 game") == std::string::npos &&
+          prompt.find("分类完成前禁止读取此块") != std::string::npos &&
+          prompt.find("不得用此块推断 game") != std::string::npos &&
+          prompt.find("<game_profile>专业毒舌嘴臭教练") != std::string::npos &&
+          prompt.find("结尾必须称呼长官</game_profile>") != std::string::npos &&
+          prompt.find("本轮游戏弹幕主角度") != std::string::npos &&
+          prompt.find(std::string(5000, 'x')) == std::string::npos) {
+        isolated_profile_on_initial_game = true;
       }
-      if (prompt.find("已经确认当前是 game") != std::string::npos &&
-          prompt.find("你会收到分类时使用的当前游戏截图") != std::string::npos &&
-          prompt.find("先在内部仔细理解截图") != std::string::npos &&
-          prompt.find("{\"barrage_candidates\"") != std::string::npos &&
-          prompt.find("{\"scene\":\"game\"") == std::string::npos &&
-          prompt.find("仅供生成，禁止写回") != std::string::npos &&
-          prompt.find("必须生成恰好 3 条") != std::string::npos &&
+      if (prompt.find("统一实时感知器") != std::string::npos &&
+          prompt.find("上一轮已验证场景是 game") != std::string::npos &&
+          prompt.find("游戏陪伴方案才成为 barrage_candidates 的强制表达规范") !=
+              std::string::npos &&
+          prompt.find("每轮必须返回完全相同的字段和类型") != std::string::npos &&
+          prompt.find("恰好 3 条非空") != std::string::npos &&
           prompt.find("冷却、去重和是否展示由后端负责") != std::string::npos &&
           prompt.find("本轮游戏弹幕主角度") != std::string::npos &&
-          prompt.find("必须显著体现其中的称呼、语气和角色风格") !=
-              std::string::npos &&
           prompt.find("<game_profile>专业毒舌嘴臭教练") != std::string::npos &&
           prompt.find("中间的重复或次要要求已压缩") != std::string::npos &&
           prompt.find("结尾必须称呼长官</game_profile>") != std::string::npos &&
           prompt.find(std::string(5000, 'x')) == std::string::npos) {
-        profiled_game_generation = true;
+        profiled_game_continuity = true;
       }
     }
-    return clean_classification && profiled_game_generation;
+    return isolated_profile_on_initial_game && profiled_game_continuity;
   }
-  bool game_generation_uses_current_frame() {
+  bool unified_perception_uses_multimodal_context() {
     std::lock_guard lock(mutex_);
     for (const auto& [id, prompt] : prompts_) {
       if (id >= (std::uint64_t{1} << 63U) &&
-          prompt.find("已经确认当前是 game") != std::string::npos &&
+          prompt.find("统一实时感知器") != std::string::npos &&
           frame_contexts_.contains(id) && frame_contexts_[id] &&
-          audio_contexts_.contains(id) && !audio_contexts_[id] &&
-          max_output_tokens_.contains(id) && max_output_tokens_[id] == 192) {
+          audio_contexts_.contains(id) && audio_contexts_[id] &&
+          max_output_tokens_.contains(id) && max_output_tokens_[id] == 0) {
         return true;
       }
     }
@@ -212,8 +238,11 @@ class TestDesktopCapture final : public jarvis::IDesktopCapture {
   void start() override {}
   void stop() noexcept override {}
   std::optional<jarvis::VideoFrame> next_frame(std::uint32_t) override {
-    return jarvis::VideoFrame{2, 2, 8, 0, std::vector<std::byte>(16)};
+    std::vector<std::byte> pixels(16, (++sequence_ % 2) ? std::byte{0} : std::byte{255});
+    return jarvis::VideoFrame{2, 2, 8, 0, std::move(pixels)};
   }
+ private:
+  std::size_t sequence_{};
 };
 class TestAudioCapture final : public jarvis::IAudioCapture {
  public:
@@ -366,39 +395,42 @@ int main() {
                                   std::make_unique<TestAudioCapture>(),
                                   std::chrono::milliseconds(10)),
           "monitoring starts with capture devices");
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  std::this_thread::sleep_for(std::chrono::milliseconds(3200));
   require(recording_ptr->received_perception(), "monitoring schedules structured perception");
   {
     std::lock_guard lock(native_event_mutex);
+    require(!perception_results.empty() &&
+                std::ranges::all_of(perception_results, has_unified_perception_schema),
+            "every perception result uses the fixed cross-scene JSON schema");
     require(std::ranges::any_of(perception_results, [](const auto& event) {
-              return event.find("\"barrage_pending\":true") != std::string::npos &&
+              return event.find("长官，局面开始了，注意力别还在读条") !=
+                         std::string::npos &&
+                     event.find("\"barrage_pending\":false") != std::string::npos &&
                      event.find("\"classification_recovered\":true") !=
+                         std::string::npos &&
+                     event.find("\"barrage_source\":\"fallback\"") !=
+                         std::string::npos &&
+                     event.find("\"barrage_fallback_reason\":\"truncated_output\"") !=
                          std::string::npos;
             }),
-            "truncated game classification is recovered and emitted before generation");
+            "truncated unified game output is recovered with an immediate fallback");
   }
-  bool fallback_emitted = false;
-  for (int attempt = 0; attempt < 500 && !fallback_emitted; ++attempt) {
-    {
-      std::lock_guard lock(native_event_mutex);
-      fallback_emitted = std::ranges::any_of(perception_results, [](const auto& event) {
-        return event.find("长官，游戏开了，脑子也请同步上线") !=
-                   std::string::npos &&
-               event.find("\"barrage_source\":\"fallback\"") !=
-                   std::string::npos &&
-               event.find("\"barrage_fallback_reason\":\"empty_candidates\"") !=
-                   std::string::npos;
-      });
-    }
-    if (!fallback_emitted) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  {
+    std::lock_guard lock(native_event_mutex);
+    require(std::ranges::any_of(perception_results, [](const auto& event) {
+              return event.find("长官，路线清楚了，稳住推进") !=
+                         std::string::npos &&
+                     event.find("\"barrage_source\":\"model\"") !=
+                         std::string::npos;
+            }),
+            "the next unified game result carries model-generated candidates");
   }
-  require(fallback_emitted, "empty game generation receives a fallback barrage");
   require(recording_ptr->received_audible_perception(),
           "structured perception receives audible system audio");
   require(recording_ptr->perception_request_count() == 2,
-          "unchanged frames do not schedule repeated perception");
-  require(recording_ptr->game_generation_uses_current_frame(),
-          "game generation reuses the current frame without resending audio");
+          "two perception cycles use two model requests without a generation request");
+  require(recording_ptr->unified_perception_uses_multimodal_context(),
+          "unified perception receives the current frame and system audio");
   require(worker.start_duplex("traffic-light", "持续观察画面，绿灯亮起时提醒我"),
           "duplex task starts while monitoring remains active");
   std::this_thread::sleep_for(std::chrono::milliseconds(40));

@@ -92,3 +92,18 @@ test("memory helpers use the daily memory API", async () => {
   });
   assert.equal(imageRequest.timeout, 10 * 60 * 1000);
 });
+
+test("pet chat uses the dedicated assistant endpoint", async () => {
+  const manager = new BackendManager({ backendRoot: process.cwd() });
+  let request;
+  manager.request = async (pathname, options) => {
+    request = [pathname, options];
+    return { reply: "在。" };
+  };
+
+  assert.deepEqual(await manager.chat("在吗？"), { reply: "在。" });
+  assert.equal(request[0], "/api/v1/assistant/chat");
+  assert.equal(request[1].method, "POST");
+  assert.deepEqual(JSON.parse(request[1].body), { message: "在吗？" });
+  assert.equal(request[1].timeout, 3 * 60 * 1000);
+});

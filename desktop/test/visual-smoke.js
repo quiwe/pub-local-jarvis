@@ -7,6 +7,7 @@ const { app, BrowserWindow, ipcMain } = require("electron");
 const output = path.resolve(__dirname, "..", "qa-output");
 const preload = path.resolve(__dirname, "..", "src", "preload.js");
 const ui = path.resolve(__dirname, "..", "src", "ui");
+let privacyToggleCount = 0;
 
 app.on("window-all-closed", () => {});
 
@@ -105,9 +106,14 @@ app.whenReady().then(async () => {
     modelName: value.modelName,
     hasApiKey: true,
   }));
-  ipcMain.handle("jarvis:toggle-screen-privacy", () => ({
-    phase: "running", monitoring: true, screenBlocked: true,
+  ipcMain.handle("jarvis:toggle-screen-privacy", () => {
+    privacyToggleCount += 1;
+    return { phase: "running", monitoring: true, screenBlocked: true };
+  });
+  ipcMain.handle("jarvis:pet-chat", (_event, message) => ({
+    reply: `我收到了：${message}`,
   }));
+  ipcMain.handle("jarvis:set-pet-chat-visible", () => true);
 
   await capture(
     "launcher",
@@ -230,11 +236,51 @@ app.whenReady().then(async () => {
     { width: 390, height: 300, backgroundColor: "#d8dfdd" },
     "pet.html",
     async window => {
+      window.show();
+      window.focus();
+      const point = await window.webContents.executeJavaScript(`(() => {
+        const bounds = document.querySelector('#privacy-toggle').getBoundingClientRect();
+        return { x: Math.round(bounds.left + bounds.width / 2), y: Math.round(bounds.top + bounds.height / 2) };
+      })()`);
+      for (const clickCount of [1, 2]) {
+        window.webContents.sendInputEvent({ type: "mouseDown", ...point, button: "left", clickCount });
+        window.webContents.sendInputEvent({ type: "mouseUp", ...point, button: "left", clickCount });
+      }
+      await new Promise(resolve => setTimeout(resolve, 80));
       const state = await window.webContents.executeJavaScript(
         "({ state: document.querySelector('#pet').dataset.state, loaded: document.querySelector('#pet-animation').complete && document.querySelector('#pet-animation').naturalWidth > 0 })"
       );
-      if (state.state !== "idle" || !state.loaded) {
-        throw new Error(`pet idle rendering failed: ${JSON.stringify(state)}`);
+      if (state.state !== "idle" || !state.loaded || privacyToggleCount !== 1) {
+        throw new Error(`pet idle interaction failed: ${JSON.stringify({ ...state, privacyToggleCount })}`);
+      }
+    }
+  );
+  await capture(
+    "pet-chat",
+    { width: 540, height: 360, frame: false, backgroundColor: "#d8dfdd" },
+    "pet.html",
+    async window => {
+      window.webContents.send("jarvis:pet-chat-visibility", true);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await window.webContents.executeJavaScript(`(() => {
+        const input = document.querySelector('#chat-input');
+        input.value = '帮我概括一下当前任务';
+        document.querySelector('#chat-form').requestSubmit();
+      })()`);
+      await new Promise(resolve => setTimeout(resolve, 180));
+      const state = await window.webContents.executeJavaScript(`(() => {
+        const panel = document.querySelector('#pet-chat');
+        const bounds = panel.getBoundingClientRect();
+        return {
+          visible: !panel.hidden,
+          messages: document.querySelectorAll('.chat-message').length,
+          petState: document.querySelector('#pet').dataset.state,
+          inViewport: bounds.left >= 0 && bounds.top >= 0 && bounds.right <= innerWidth && bounds.bottom <= innerHeight,
+          overflow: document.body.scrollWidth > innerWidth || document.body.scrollHeight > innerHeight,
+        };
+      })()`);
+      if (!state.visible || state.messages !== 2 || state.petState !== "normal" || !state.inViewport || state.overflow) {
+        throw new Error(`pet chat rendering failed: ${JSON.stringify(state)}`);
       }
     }
   );

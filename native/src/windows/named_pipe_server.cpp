@@ -48,8 +48,10 @@ int NamedPipeServer::run() {
   impl_->worker.set_completion([this](InferenceResult result) {
     std::string text = result.cancelled ? std::string{} : std::move(result.text);
     const auto payload = std::span<const std::byte>(reinterpret_cast<const std::byte*>(text.data()), text.size());
-    const auto response = ipc::encode(result.cancelled ? ipc::MessageType::status : ipc::MessageType::result,
-                                      result.id, payload);
+    const auto response = ipc::encode(
+        result.cancelled ? ipc::MessageType::status : ipc::MessageType::result,
+        result.id, payload,
+        result.cancelled ? static_cast<std::uint32_t>(ipc::StatusCode::cancelled) : 0U);
     std::lock_guard lock(impl_->write_mutex);
     if (impl_->pipe != INVALID_HANDLE_VALUE) write_exact(impl_->pipe, response.data(), response.size());
   });

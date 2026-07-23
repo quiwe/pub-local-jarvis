@@ -10,6 +10,7 @@ from jarvis_backend.native.protocol import (
     Frame,
     MessageType,
     ProtocolError,
+    StatusCode,
     decode_frame,
     encode_frame,
     json_payload,
@@ -34,6 +35,14 @@ def test_protocol_round_trip_matches_native_header() -> None:
     )
     assert checksum == zlib.crc32(frame.payload) & 0xFFFFFFFF
     assert decode_frame(encoded) == frame
+
+
+def test_cancelled_status_round_trip_preserves_status_code() -> None:
+    frame = Frame(MessageType.STATUS, request_id=17, flags=StatusCode.CANCELLED)
+
+    decoded = decode_frame(encode_frame(frame))
+
+    assert decoded.flags == StatusCode.CANCELLED
 
 
 def test_json_payload_is_utf8_and_compact() -> None:

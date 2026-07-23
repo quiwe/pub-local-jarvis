@@ -28,6 +28,10 @@ contextBridge.exposeInMainWorld("jarvis", {
   getImageGenerationSettings: () => ipcRenderer.invoke("jarvis:image-settings-get"),
   saveImageGenerationSettings: value => ipcRenderer.invoke("jarvis:image-settings-save", value),
   toggleScreenPrivacy: () => ipcRenderer.invoke("jarvis:toggle-screen-privacy"),
+  chat: message => ipcRenderer.invoke("jarvis:pet-chat", message),
+  setPetChatVisible: visible => ipcRenderer.invoke("jarvis:set-pet-chat-visible", visible),
+  startPetDrag: () => ipcRenderer.send("jarvis:pet-drag-start"),
+  stopPetDrag: () => ipcRenderer.send("jarvis:pet-drag-stop"),
   onState: subscribe("jarvis:state"),
   onProgress: subscribe("jarvis:progress"),
   onMemoryUpdated: subscribe("jarvis:memory-updated"),
@@ -35,4 +39,5 @@ contextBridge.exposeInMainWorld("jarvis", {
   onScreenPrivacy: subscribe("jarvis:screen-privacy"),
   onBubble: subscribe("jarvis:bubble"),
   onBarrage: subscribe("jarvis:barrage"),
+  onPetChatVisibility: subscribe("jarvis:pet-chat-visibility"),
 });
