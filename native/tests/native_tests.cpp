@@ -75,6 +75,7 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
   bool ready() const noexcept override { return ready_; }
   jarvis::InferenceResult infer(const jarvis::InferenceRequest& request,
                                 const std::atomic_bool&) override {
+    std::size_t perception_index = 0;
     {
       std::lock_guard lock(mutex_);
       contexts_[request.id] = bool(request.frame) && bool(request.audio_16khz_mono);
@@ -86,12 +87,19 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
                               [](float sample) { return sample != 0.0F; });
       prompts_[request.id] = request.prompt;
       max_output_tokens_[request.id] = request.max_output_tokens;
+      if (request.prompt.find("统一实时感知器") != std::string::npos) {
+        perception_index = ++unified_perception_count_;
+      }
     }
     changed_.notify_all();
-    if (request.prompt.find("统一实时感知器") != std::string::npos &&
-        request.prompt.find("上一轮已验证场景是 game") == std::string::npos) {
+    if (perception_index == 1) {
       return {request.id,
-              R"({"scene":"game","confidence":0.9,"scene_evidence":{"game_surface":true,"interactive_gameplay":true,"game_video_or_stream":false,"fullscreen_game_media":false,"non_game_surface":false},"observation":"玩家正在进行测试游戏")",
+              R"({"scene":"game","confidence":0.9,"scene_evidence":{"game_surface":true,"interactive_gameplay":true},"observation":"角色残血从河道撤退，右侧敌人正在追击，两个技能仍在冷却","barrage_candidates":["长官，残血还在河道晃，嫌命长？","右边都追上来了，还不回头？","两个技能全黑还想反打，长官)",
+              false};
+    }
+    if (perception_index == 3) {
+      return {request.id,
+              R"({"scene":"game","confidence":0.91,"scene_evidence":{"game_surface":true,"interactive_gameplay":true,"game_video_or_stream":false,"fullscreen_game_media":false,"non_game_surface":false})",
               false};
     }
     return {request.id,
@@ -101,7 +109,10 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
   bool start_duplex(std::string instruction) override {
     std::lock_guard lock(mutex_);
     duplex_instruction_ = std::move(instruction);
+    duplex_instructions_.push_back(duplex_instruction_);
+    ++duplex_start_count_;
     duplex_active_ = true;
+    changed_.notify_all();
     return true;
   }
   void stop_duplex() noexcept override {
@@ -168,6 +179,12 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
           prompt.find("普通主动文本完全由独立的原生全双工会话决定") !=
               std::string::npos &&
           prompt.find("barrage_candidates") != std::string::npos &&
+          prompt.find("\"observation\":\"\"") <
+              prompt.find("\"barrage_candidates\":[]") &&
+          prompt.find("后续内容唯一允许使用的事实底稿") != std::string::npos &&
+          prompt.find("值为 false 的键必须省略") != std::string::npos &&
+          prompt.find("去掉角色口吻后") != std::string::npos &&
+          prompt.find("禁止输出脱离具体对象和原因") != std::string::npos &&
           prompt.find("assistant_message") != std::string::npos &&
           prompt.find("Steam 等游戏启动器") != std::string::npos &&
           prompt.find("上一轮已验证场景是 game") == std::string::npos &&
@@ -181,7 +198,7 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
       }
       if (prompt.find("统一实时感知器") != std::string::npos &&
           prompt.find("上一轮已验证场景是 game") != std::string::npos &&
-          prompt.find("游戏陪伴方案才成为 barrage_candidates 的强制表达规范") !=
+          prompt.find("游戏陪伴方案才成为 barrage_candidates 的表达规范") !=
               std::string::npos &&
           prompt.find("每轮必须返回完全相同的字段和类型") != std::string::npos &&
           prompt.find("恰好 3 条非空") != std::string::npos &&
@@ -219,6 +236,19 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
     std::lock_guard lock(mutex_);
     return duplex_had_context_ && duplex_instruction_.find("绿灯") != std::string::npos;
   }
+  void wait_for_duplex_rebuild() {
+    std::unique_lock lock(mutex_);
+    changed_.wait_for(lock, std::chrono::seconds(2), [&] {
+      return duplex_start_count_ >= 2;
+    });
+  }
+  bool duplex_rebuilt_with_same_instruction() {
+    std::lock_guard lock(mutex_);
+    return duplex_instructions_.size() >= 2 &&
+           std::ranges::all_of(duplex_instructions_, [&](const auto& instruction) {
+             return instruction == duplex_instructions_.front();
+           });
+  }
  private:
   bool ready_{};
   std::unordered_map<std::uint64_t, bool> contexts_;
@@ -227,8 +257,11 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
   std::unordered_map<std::uint64_t, bool> audible_contexts_;
   std::unordered_map<std::uint64_t, std::string> prompts_;
   std::unordered_map<std::uint64_t, std::int32_t> max_output_tokens_;
+  std::size_t unified_perception_count_{};
   std::deque<jarvis::DuplexResult> duplex_results_;
   std::string duplex_instruction_;
+  std::vector<std::string> duplex_instructions_;
+  std::size_t duplex_start_count_{};
   std::atomic_bool duplex_active_{false};
   bool duplex_had_context_{};
   std::mutex mutex_; std::condition_variable changed_;
@@ -395,7 +428,7 @@ int main() {
                                   std::make_unique<TestAudioCapture>(),
                                   std::chrono::milliseconds(10)),
           "monitoring starts with capture devices");
-  std::this_thread::sleep_for(std::chrono::milliseconds(3200));
+  std::this_thread::sleep_for(std::chrono::milliseconds(2300));
   require(recording_ptr->received_perception(), "monitoring schedules structured perception");
   {
     std::lock_guard lock(native_event_mutex);
@@ -403,17 +436,34 @@ int main() {
                 std::ranges::all_of(perception_results, has_unified_perception_schema),
             "every perception result uses the fixed cross-scene JSON schema");
     require(std::ranges::any_of(perception_results, [](const auto& event) {
-              return event.find("长官，局面开始了，注意力别还在读条") !=
+              return event.find("角色残血从河道撤退") !=
+                         std::string::npos &&
+                     event.find("长官，残血还在河道晃，嫌命长？") !=
+                         std::string::npos &&
+                     event.find("右边都追上来了，还不回头？") !=
                          std::string::npos &&
                      event.find("\"barrage_pending\":false") != std::string::npos &&
                      event.find("\"classification_recovered\":true") !=
                          std::string::npos &&
+                     event.find("\"barrage_source\":\"model\"") !=
+                         std::string::npos &&
+                     event.find("\"barrage_fallback_reason\":\"\"") !=
+                         std::string::npos;
+            }),
+            "complete candidates survive a partially truncated candidate array");
+    require(std::ranges::any_of(perception_results, [](const auto& event) {
+              return event.find("\"classification_recovered\":true") !=
+                         std::string::npos &&
                      event.find("\"barrage_source\":\"fallback\"") !=
                          std::string::npos &&
                      event.find("\"barrage_fallback_reason\":\"truncated_output\"") !=
+                         std::string::npos &&
+                     event.find("\"barrage_candidates\":[\"") !=
+                         std::string::npos &&
+                     event.find("\"barrage_candidates\":[\"\"]") ==
                          std::string::npos;
             }),
-            "truncated unified game output is recovered with an immediate fallback");
+            "truncated output without candidates still uses a fallback");
   }
   {
     std::lock_guard lock(native_event_mutex);
@@ -427,8 +477,8 @@ int main() {
   }
   require(recording_ptr->received_audible_perception(),
           "structured perception receives audible system audio");
-  require(recording_ptr->perception_request_count() == 2,
-          "two perception cycles use two model requests without a generation request");
+  require(recording_ptr->perception_request_count() == 3,
+          "one-second perception cadence runs three unified model requests");
   require(recording_ptr->unified_perception_uses_multimodal_context(),
           "unified perception receives the current frame and system audio");
   require(worker.start_duplex("traffic-light", "持续观察画面，绿灯亮起时提醒我"),
@@ -448,8 +498,38 @@ int main() {
             }),
             "duplex task emits model speak decisions with text");
   }
-  require(recording_ptr->perception_request_count() == 2,
+  require(recording_ptr->perception_request_count() == 3,
           "duplex task does not replace structured perception");
+  recording_ptr->wait_for_duplex_rebuild();
+  require(recording_ptr->duplex_rebuilt_with_same_instruction(),
+          "duplex context is periodically rebuilt with the original instruction");
+  for (int i = 0; i < 100; ++i) {
+    {
+      std::lock_guard lock(native_event_mutex);
+      if (std::ranges::any_of(native_events, [](const auto& event) {
+            return event.find("\"native_event\":\"duplex.rebuilt\"") !=
+                   std::string::npos;
+          })) {
+        break;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  {
+    std::lock_guard lock(native_event_mutex);
+    require(std::ranges::any_of(native_events, [](const auto& event) {
+              return event.find("\"native_event\":\"duplex.rebuild.requested\"") !=
+                         std::string::npos &&
+                     event.find("\"completed_frames\":24") !=
+                         std::string::npos;
+            }),
+            "duplex context rebuild is requested at the safe horizon");
+    require(std::ranges::any_of(native_events, [](const auto& event) {
+              return event.find("\"native_event\":\"duplex.rebuilt\"") !=
+                     std::string::npos;
+            }),
+            "duplex context rebuild emits a completion event");
+  }
   worker.stop_duplex();
   worker.submit_prompt(21, "describe context");
   recording_ptr->wait_request(21);

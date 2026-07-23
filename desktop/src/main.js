@@ -422,23 +422,37 @@ function schedulePrivacyMessage() {
   }, randomPrivacyDelay());
 }
 
+function applyScreenPrivacy(screenBlocked, announce = true) {
+  publishState({ screenBlocked });
+  send(petWindow, "jarvis:screen-privacy", screenBlocked);
+  barrageWindow.hide();
+  petWindow.showInactive();
+  if (screenBlocked) {
+    if (announce) {
+      showBubble({ text: "你在干嘛？让我看看！！", tone: "privacy", duration: 7000 });
+    }
+    schedulePrivacyMessage();
+  } else {
+    clearTimeout(privacyMessageTimer);
+    setScene(state.scene);
+    if (announce) {
+      showBubble({ text: "画面恢复，我又能看见了。", tone: "success", duration: 5000 });
+    }
+  }
+}
+
 async function toggleScreenPrivacy() {
   if (privacyTogglePromise) return privacyTogglePromise;
   if (state.phase !== "running") return { ...state };
   privacyTogglePromise = (async () => {
+    const previous = state.screenBlocked;
     const screenBlocked = !state.screenBlocked;
-    await manager.command(screenBlocked ? "pause_monitoring" : "resume_monitoring");
-    publishState({ screenBlocked });
-    send(petWindow, "jarvis:screen-privacy", screenBlocked);
-    barrageWindow.hide();
-    petWindow.showInactive();
-    if (screenBlocked) {
-      showBubble({ text: "你在干嘛？让我看看！！", tone: "privacy", duration: 7000 });
-      schedulePrivacyMessage();
-    } else {
-      clearTimeout(privacyMessageTimer);
-      setScene(state.scene);
-      showBubble({ text: "画面恢复，我又能看见了。", tone: "success", duration: 5000 });
+    applyScreenPrivacy(screenBlocked);
+    try {
+      await manager.command(screenBlocked ? "pause_monitoring" : "resume_monitoring");
+    } catch (error) {
+      applyScreenPrivacy(previous, false);
+      throw error;
     }
     return { ...state };
   })();

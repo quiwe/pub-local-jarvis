@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import re
@@ -11,7 +12,13 @@ import jarvis_backend.orchestrator.service as service_module
 from jarvis_backend.app import create_app
 from jarvis_backend.courses import CourseStatus
 from jarvis_backend.memory import MemoryEvent
-from jarvis_backend.settings import CourseSettings, MemorySettings, SceneSettings, Settings
+from jarvis_backend.settings import (
+    CourseSettings,
+    InteractionSettings,
+    MemorySettings,
+    SceneSettings,
+    Settings,
+)
 
 
 def make_client(tmp_path):
@@ -386,6 +393,7 @@ async def test_display_scene_uses_configured_entry_and_exit_samples(tmp_path):
             display_enter_samples=2,
             game_enter_samples=1,
             display_exit_samples=2,
+            game_exit_samples=2,
         ),
         memory=MemorySettings(root=tmp_path / "memory"),
         courses=CourseSettings(sessions_root=tmp_path / "sessions"),
@@ -410,6 +418,41 @@ async def test_display_scene_uses_configured_entry_and_exit_samples(tmp_path):
         return orchestrator.events.history("perception.completed")[-1].payload["scene"]
 
     assert await perceive("game") == "game"
+    assert await perceive("other") == "game"
+    assert await perceive("other") == "other"
+
+
+async def test_default_game_scene_switches_quickly_on_clear_evidence(tmp_path):
+    settings = Settings(
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(sessions_root=tmp_path / "sessions"),
+    )
+    orchestrator = create_app(settings=settings).state.orchestrator
+
+    async def perceive(scene, *, non_game_surface=False):
+        await orchestrator._handle_perception(
+            {
+                "type": "perception.completed",
+                "text": json.dumps(
+                    {
+                        "scene": scene,
+                        "confidence": 0.95,
+                        "scene_evidence": {
+                            "interactive_gameplay": scene == "game",
+                            "non_game_surface": non_game_surface,
+                        },
+                        "observation": "运行中的游戏" if scene == "game" else "桌面",
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        )
+        return orchestrator.events.history("perception.completed")[-1].payload["scene"]
+
+    assert await perceive("game") == "game"
+    assert await perceive("other", non_game_surface=True) == "other"
+
+    orchestrator.display_scene.force("game")
     assert await perceive("other") == "game"
     assert await perceive("other") == "other"
 
@@ -479,6 +522,7 @@ async def test_uncertain_game_exit_requires_more_samples(tmp_path):
             display_enter_samples=2,
             game_enter_samples=1,
             display_exit_samples=2,
+            game_exit_samples=2,
             game_uncertain_exit_samples=4,
         ),
         memory=MemorySettings(root=tmp_path / "memory"),
@@ -759,6 +803,90 @@ def test_interaction_frequency_blocks_repeated_barrage_during_dedup_window(tmp_p
             "漂亮操作！",
             "漂亮操作！",
         ]
+
+
+async def test_game_barrage_candidates_are_emitted_as_a_spaced_sequence(tmp_path):
+    settings = Settings(
+        interaction=InteractionSettings(game_barrage_interval_seconds=0.01),
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(sessions_root=tmp_path / "sessions"),
+    )
+    orchestrator = create_app(settings=settings).state.orchestrator
+    orchestrator.display_scene.force("game")
+
+    await orchestrator._handle_perception(
+        {
+            "type": "perception.completed",
+            "text": json.dumps(
+                {
+                    "scene": "game",
+                    "confidence": 0.95,
+                    "scene_evidence": {"interactive_gameplay": True},
+                    "observation": "玩家正在推进战线",
+                    "barrage_candidates": [
+                        "左侧敌人已经露头",
+                        "补给足够继续推进",
+                        "这波走位总算醒了",
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+        }
+    )
+
+    assert len(orchestrator.events.history("barrage.generated")) == 1
+    await asyncio.sleep(0.06)
+    assert [
+        event.payload["text"]
+        for event in orchestrator.events.history("barrage.generated")
+    ] == ["左侧敌人已经露头", "补给足够继续推进", "这波走位总算醒了"]
+
+
+async def test_leaving_game_cancels_queued_barrage_candidates(tmp_path):
+    settings = Settings(
+        interaction=InteractionSettings(game_barrage_interval_seconds=0.05),
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(sessions_root=tmp_path / "sessions"),
+    )
+    orchestrator = create_app(settings=settings).state.orchestrator
+    orchestrator.display_scene.force("game")
+
+    await orchestrator._handle_perception(
+        {
+            "type": "perception.completed",
+            "text": json.dumps(
+                {
+                    "scene": "game",
+                    "confidence": 0.95,
+                    "scene_evidence": {"interactive_gameplay": True},
+                    "observation": "玩家正在推进战线",
+                    "barrage_candidates": ["先稳住左侧视野", "补给充足可以继续推进"],
+                },
+                ensure_ascii=False,
+            ),
+        }
+    )
+    await orchestrator._handle_perception(
+        {
+            "type": "perception.completed",
+            "text": json.dumps(
+                {
+                    "scene": "other",
+                    "confidence": 0.99,
+                    "scene_evidence": {"non_game_surface": True},
+                    "observation": "用户已经返回桌面",
+                },
+                ensure_ascii=False,
+            ),
+        }
+    )
+    await asyncio.sleep(0.07)
+
+    assert orchestrator.display_scene.current == "other"
+    assert [
+        event.payload["text"]
+        for event in orchestrator.events.history("barrage.generated")
+    ] == ["先稳住左侧视野"]
 
 
 def test_game_barrage_semantic_near_duplicates_are_suppressed(tmp_path):

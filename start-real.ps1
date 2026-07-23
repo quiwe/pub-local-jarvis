@@ -1036,7 +1036,8 @@ max_frame_bytes = 8388608
 display_enter_samples = 2
 game_enter_samples = 1
 display_exit_samples = 2
-game_uncertain_exit_samples = 4
+game_exit_samples = 1
+game_uncertain_exit_samples = 2
 
 [memory]
 root = "$(Convert-ToTomlPath (Join-Path $ProjectRoot 'memory'))"
@@ -1046,6 +1047,7 @@ ordinary_bubble_cooldown_seconds = 20.0
 course_bubble_cooldown_seconds = 30.0
 game_barrage_repeat_seconds = 20.0
 game_barrage_similar_seconds = 4.0
+game_barrage_interval_seconds = 2.5
 
 [courses]
 sessions_root = "$(Convert-ToTomlPath (Join-Path $ProjectRoot 'courses\sessions'))"

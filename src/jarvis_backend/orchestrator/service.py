@@ -154,6 +154,7 @@ class OrchestrationService:
             maxlen=self.display_scene.enter_samples
         )
         self._recent_barrages: deque[tuple[str, float]] = deque(maxlen=12)
+        self._barrage_task: asyncio.Task[None] | None = None
         self._recent_duplex_messages: deque[tuple[str, float]] = deque(maxlen=4)
         self._pet_chat_history: deque[tuple[str, str]] = deque(maxlen=4)
         self._pet_chat_lock = asyncio.Lock()
@@ -194,6 +195,7 @@ class OrchestrationService:
         if self.lifecycle.snapshot.state == LifecycleState.STOPPED:
             return
         await self.lifecycle.transition(LifecycleState.STOPPING)
+        await self._cancel_barrage_sequence()
         await self.supervisor.stop()
         await self.lifecycle.transition(LifecycleState.STOPPED)
         await self.events.publish(Event("lifecycle.changed", {"state": "stopped"}))
@@ -219,6 +221,7 @@ class OrchestrationService:
                 raise
         elif method in {"pause_monitoring", "stop_monitoring"}:
             self._screen_idle = False
+            await self._cancel_barrage_sequence()
             previous_id = self._duplex_session_id
             self._duplex_session_id = None
             self._duplex_instruction = ""
@@ -1291,6 +1294,106 @@ class OrchestrationService:
                 value[key] = json.loads(match.group(1))
         return value
 
+    def _prune_recent_barrages(self, now: float) -> None:
+        history_seconds = max(
+            self.settings.interaction.game_barrage_repeat_seconds,
+            self.settings.interaction.game_barrage_similar_seconds,
+        )
+        cutoff = now - history_seconds
+        while self._recent_barrages and self._recent_barrages[0][1] < cutoff:
+            self._recent_barrages.popleft()
+
+    def _barrage_is_available(self, candidate: str, now: float) -> bool:
+        normalized_candidate = _normalize_text(candidate)
+        return not any(
+            (
+                normalized_candidate == _normalize_text(previous)
+                and now - emitted_at
+                < self.settings.interaction.game_barrage_repeat_seconds
+            )
+            or (
+                _texts_are_similar(candidate, previous)
+                and now - emitted_at
+                < self.settings.interaction.game_barrage_similar_seconds
+            )
+            for previous, emitted_at in self._recent_barrages
+        )
+
+    def _rank_barrage_candidates(self, candidates: Sequence[str], now: float) -> list[str]:
+        self._prune_recent_barrages(now)
+        ranked: list[tuple[int, float, int, str]] = []
+        for index, candidate in enumerate(candidates):
+            if not self._barrage_is_available(candidate, now):
+                continue
+            normalized_candidate = _normalize_text(candidate)
+            recent_similarity = max(
+                (
+                    SequenceMatcher(
+                        None, normalized_candidate, _normalize_text(previous)
+                    ).ratio()
+                    for previous, _ in self._recent_barrages
+                ),
+                default=0.0,
+            )
+            ranked.append(
+                (_barrage_quality_penalty(candidate), recent_similarity, index, candidate)
+            )
+        selected: list[str] = []
+        for _, _, _, candidate in sorted(ranked):
+            if any(_texts_are_similar(candidate, previous) for previous in selected):
+                continue
+            selected.append(candidate)
+        return selected
+
+    async def _cancel_barrage_sequence(self) -> None:
+        task = self._barrage_task
+        self._barrage_task = None
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _emit_barrage(self, text: str, metadata: dict[str, Any]) -> bool:
+        if self.display_scene.current != "game":
+            return False
+        now = time.monotonic()
+        self._prune_recent_barrages(now)
+        if not self._barrage_is_available(text, now):
+            return False
+        self._recent_barrages.append((text, now))
+        await self.events.publish(Event("barrage.generated", {"text": text, **metadata}))
+        return True
+
+    async def _emit_barrage_sequence(
+        self, candidates: Sequence[str], metadata: dict[str, Any]
+    ) -> None:
+        try:
+            for candidate in candidates:
+                await asyncio.sleep(
+                    self.settings.interaction.game_barrage_interval_seconds
+                )
+                if self.display_scene.current != "game":
+                    return
+                await self._emit_barrage(candidate, metadata)
+        finally:
+            if asyncio.current_task() is self._barrage_task:
+                self._barrage_task = None
+
+    async def _start_barrage_sequence(
+        self, candidates: Sequence[str], metadata: dict[str, Any]
+    ) -> None:
+        await self._cancel_barrage_sequence()
+        if not candidates or not await self._emit_barrage(candidates[0], metadata):
+            return
+        if len(candidates) > 1:
+            self._barrage_task = asyncio.create_task(
+                self._emit_barrage_sequence(candidates[1:], metadata),
+                name="jarvis-game-barrage-sequence",
+            )
+
     async def _handle_perception(self, payload: dict[str, Any]) -> None:
         try:
             result = self._parse_perception(str(payload.get("text", "")))
@@ -1311,68 +1414,36 @@ class OrchestrationService:
             and not result["scene_evidence"]["non_game_surface"]
             and not result["scene_evidence"]["ordinary_browsing"]
         )
-        exit_samples = (
-            self.settings.scene.game_uncertain_exit_samples
-            if uncertain_game_exit
-            else None
-        )
+        exit_samples = None
+        if self.display_scene.current == "game" and scene != "game":
+            exit_samples = (
+                self.settings.scene.game_uncertain_exit_samples
+                if uncertain_game_exit
+                else self.settings.scene.game_exit_samples
+            )
         display_scene = self.display_scene.observe(scene, exit_samples=exit_samples)
         result["observed_scene"] = scene
         result["scene"] = display_scene
         result["uncertain_game_exit"] = uncertain_game_exit
-        barrage_history_seconds = max(
-            self.settings.interaction.game_barrage_repeat_seconds,
-            self.settings.interaction.game_barrage_similar_seconds,
-        )
-        barrage_cutoff = now - barrage_history_seconds
-        while self._recent_barrages and self._recent_barrages[0][1] < barrage_cutoff:
-            self._recent_barrages.popleft()
+        available_candidates: list[str] = []
         if scene == "game":
-            available_candidates: list[tuple[int, float, int, str]] = []
-            for index, candidate in enumerate(result["barrage_candidates"]):
-                normalized_candidate = _normalize_text(candidate)
-                if any(
-                    (
-                        normalized_candidate == _normalize_text(previous)
-                        and now - emitted_at
-                        < self.settings.interaction.game_barrage_repeat_seconds
-                    )
-                    or (
-                        _texts_are_similar(candidate, previous)
-                        and now - emitted_at
-                        < self.settings.interaction.game_barrage_similar_seconds
-                    )
-                    for previous, emitted_at in self._recent_barrages
-                ):
-                    continue
-                recent_similarity = max(
-                    (
-                        SequenceMatcher(
-                            None, normalized_candidate, _normalize_text(previous)
-                        ).ratio()
-                        for previous, _ in self._recent_barrages
-                    ),
-                    default=0.0,
-                )
-                available_candidates.append(
-                    (_barrage_quality_penalty(candidate), recent_similarity, index, candidate)
-                )
-            result["barrage"] = min(available_candidates, default=(0, 0.0, 0, ""))[-1]
+            available_candidates = self._rank_barrage_candidates(
+                result["barrage_candidates"], now
+            )
+            result["barrage"] = available_candidates[0] if available_candidates else ""
 
         await self._record_memory_activity(result, now)
         await self.events.publish(Event("perception.completed", result))
-        if scene == "game" and display_scene == "game" and result["barrage"]:
-            self._recent_barrages.append((result["barrage"], now))
-            await self.events.publish(
-                Event(
-                    "barrage.generated",
-                    {
-                        "text": result["barrage"],
-                        "confidence": result["confidence"],
-                        "source": result["barrage_source"],
-                        "fallback_reason": result["barrage_fallback_reason"],
-                    },
-                )
+        if scene != "game" or display_scene != "game":
+            await self._cancel_barrage_sequence()
+        elif available_candidates:
+            await self._start_barrage_sequence(
+                available_candidates,
+                {
+                    "confidence": result["confidence"],
+                    "source": result["barrage_source"],
+                    "fallback_reason": result["barrage_fallback_reason"],
+                },
             )
 
         if scene == "course" and display_scene != "course":

@@ -56,7 +56,9 @@ class Worker {
   std::jthread capture_thread_{};
   std::jthread duplex_input_thread_{};
   std::jthread duplex_result_thread_{};
+  std::jthread duplex_maintenance_thread_{};
   std::condition_variable_any duplex_input_ready_{};
+  std::condition_variable_any duplex_maintenance_ready_{};
   std::optional<DuplexFrame> pending_duplex_frame_{};
   std::shared_ptr<const VideoFrame> latest_frame_{};
   std::shared_ptr<const std::vector<float>> latest_audio_{};
@@ -65,8 +67,12 @@ class Worker {
   std::uintptr_t active_perception_window_{};
   std::atomic_bool reset_perception_audio_{false};
   std::atomic_bool duplex_task_active_{false};
+  std::atomic_bool duplex_rebuild_requested_{false};
+  std::atomic_bool duplex_rebuilding_{false};
+  std::atomic_uint32_t duplex_completed_frames_{0};
   std::atomic_uint64_t duplex_sequence_{0};
   std::string duplex_session_id_{};
+  std::string duplex_instruction_{};
   std::deque<RecentPerception> recent_perceptions_{};
   std::string previous_scene_{};
   std::string game_profile_name_{};

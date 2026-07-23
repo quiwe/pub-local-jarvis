@@ -106,8 +106,9 @@ app.whenReady().then(async () => {
     modelName: value.modelName,
     hasApiKey: true,
   }));
-  ipcMain.handle("jarvis:toggle-screen-privacy", () => {
+  ipcMain.handle("jarvis:toggle-screen-privacy", async () => {
     privacyToggleCount += 1;
+    await new Promise(resolve => setTimeout(resolve, 250));
     return { phase: "running", monitoring: true, screenBlocked: true };
   });
   ipcMain.handle("jarvis:pet-chat", (_event, message) => ({
@@ -246,11 +247,11 @@ app.whenReady().then(async () => {
         window.webContents.sendInputEvent({ type: "mouseDown", ...point, button: "left", clickCount });
         window.webContents.sendInputEvent({ type: "mouseUp", ...point, button: "left", clickCount });
       }
-      await new Promise(resolve => setTimeout(resolve, 80));
+      await new Promise(resolve => setTimeout(resolve, 40));
       const state = await window.webContents.executeJavaScript(
         "({ state: document.querySelector('#pet').dataset.state, loaded: document.querySelector('#pet-animation').complete && document.querySelector('#pet-animation').naturalWidth > 0 })"
       );
-      if (state.state !== "idle" || !state.loaded || privacyToggleCount !== 1) {
+      if (state.state !== "closed" || !state.loaded || privacyToggleCount !== 1) {
         throw new Error(`pet idle interaction failed: ${JSON.stringify({ ...state, privacyToggleCount })}`);
       }
     }

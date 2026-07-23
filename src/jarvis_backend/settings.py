@@ -34,7 +34,8 @@ class SceneSettings(BaseModel):
     display_enter_samples: int = Field(default=2, ge=1)
     game_enter_samples: int = Field(default=1, ge=1)
     display_exit_samples: int = Field(default=2, ge=1)
-    game_uncertain_exit_samples: int = Field(default=4, ge=1)
+    game_exit_samples: int = Field(default=1, ge=1)
+    game_uncertain_exit_samples: int = Field(default=2, ge=1)
 
     @model_validator(mode="after")
     def thresholds_have_hysteresis(self) -> SceneSettings:
@@ -53,6 +54,7 @@ class InteractionSettings(BaseModel):
     course_bubble_cooldown_seconds: float = Field(default=30.0, ge=0)
     game_barrage_repeat_seconds: float = Field(default=20.0, ge=0)
     game_barrage_similar_seconds: float = Field(default=4.0, ge=0)
+    game_barrage_interval_seconds: float = Field(default=2.5, ge=0)
 
 
 class MemorySettings(BaseModel):

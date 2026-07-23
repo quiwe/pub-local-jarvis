@@ -25,6 +25,7 @@ const petContext = {
 let dragPointerId = null;
 let dragOrigin = null;
 let dragging = false;
+let privacyTogglePending = false;
 
 function syncPetAnimation({ replayNormal = false } = {}) {
   const nextState = resolvePetState(petContext);
@@ -34,12 +35,29 @@ function syncPetAnimation({ replayNormal = false } = {}) {
   petAnimation.src = `${PET_ANIMATIONS[nextState]}?play=${++animationSequence}`;
 }
 
+function setScreenPrivacy(enabled) {
+  petContext.screenBlocked = Boolean(enabled);
+  pet.dataset.screenBlocked = petContext.screenBlocked ? "true" : "false";
+  pet.setAttribute("aria-label", petContext.screenBlocked ? "AI Jarvis，画面感知已暂停" : "AI Jarvis 桌宠");
+  syncPetAnimation();
+}
+
 privacyToggle.addEventListener("dblclick", async event => {
   event.preventDefault();
+  if (privacyTogglePending) return;
+  privacyTogglePending = true;
+  const previous = petContext.screenBlocked;
+  setScreenPrivacy(!previous);
   try {
-    await window.jarvis.toggleScreenPrivacy();
+    const result = await window.jarvis.toggleScreenPrivacy();
+    if (typeof result?.screenBlocked === "boolean") {
+      setScreenPrivacy(result.screenBlocked);
+    }
   } catch (_) {
+    setScreenPrivacy(previous);
     // The main window reports backend command failures through its normal status path.
+  } finally {
+    privacyTogglePending = false;
   }
 });
 
@@ -147,10 +165,7 @@ window.jarvis.onPetScene(scene => {
 });
 
 window.jarvis.onScreenPrivacy(enabled => {
-  petContext.screenBlocked = Boolean(enabled);
-  pet.dataset.screenBlocked = petContext.screenBlocked ? "true" : "false";
-  pet.setAttribute("aria-label", petContext.screenBlocked ? "AI Jarvis，画面感知已暂停" : "AI Jarvis 桌宠");
-  syncPetAnimation();
+  setScreenPrivacy(enabled);
 });
 
 window.jarvis.onBubble(message => {
