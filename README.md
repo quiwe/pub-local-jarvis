@@ -202,7 +202,7 @@ AIJarvis/
 └── tests/               Python 测试
 ```
 
-更完整的架构、数据流与能力边界见 [项目说明](PROJECT_OVERVIEW.md)，参与开发前请阅读 [贡献指南](CONTRIBUTING.md)。
+更完整的架构、数据流与能力边界见 [项目说明](PROJECT_OVERVIEW.md)。
 
 ## 致谢
 
@@ -211,4 +211,4 @@ AIJarvis/
 
 ## 许可证
 
-项目源代码采用 [MIT License](LICENSE)。第三方组件及模型的许可边界见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+项目源代码采用 [MIT License](LICENSE)。
