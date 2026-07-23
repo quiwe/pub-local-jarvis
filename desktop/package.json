@@ -35,32 +35,16 @@
     ],
     "extraResources": [
       {
-        "from": "../start-real.ps1",
-        "to": "backend/start-real.ps1"
+        "from": "build/runtime/jarvis-launcher",
+        "to": "backend/runtime"
       },
       {
-        "from": "../pyproject.toml",
-        "to": "backend/pyproject.toml"
+        "from": "../LICENSE",
+        "to": "licenses/AI-Jarvis-LICENSE.txt"
       },
       {
-        "from": "../CMakeLists.txt",
-        "to": "backend/CMakeLists.txt"
-      },
-      {
-        "from": "../config",
-        "to": "backend/config"
-      },
-      {
-        "from": "../src",
-        "to": "backend/src"
-      },
-      {
-        "from": "../native",
-        "to": "backend/native"
-      },
-      {
-        "from": "../third_party/runtime",
-        "to": "backend/third_party/runtime"
+        "from": "../THIRD_PARTY_NOTICES.md",
+        "to": "licenses/THIRD_PARTY_NOTICES.md"
       }
     ],
     "win": {
@@ -69,7 +53,10 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AI Jarvis"
     }
   }
 }

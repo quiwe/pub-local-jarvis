@@ -1441,7 +1441,10 @@ def test_duplex_messages_reject_narration_offers_and_uncertainty(tmp_path):
             "光标在打开多个程序的快捷方式。", require_proactive_value=False
         ) == ""
         assert orchestrator._clean_duplex_message(
-            "视频开始了，讲解的是高等数学2.0版。", require_proactive_value=False
+            "视频开始了，讲解的是示例课程。", require_proactive_value=False
+        ) == ""
+        assert orchestrator._clean_duplex_message(
+            "新闻页面介绍的是示例主题。", require_proactive_value=False
         ) == ""
         assert orchestrator._clean_duplex_message(
             "同一个报错看第三遍也不会自己消失，先看第一条堆栈。",
@@ -1526,6 +1529,7 @@ def test_ambient_duplex_rejects_routine_fragments_and_accepts_grounded_comment(t
             [
                 "已经进入“概览”页，开始查看",
                 "应用信息了。",
+                "新闻页面介绍的是示例主题。",
                 "这里的端口配置值得先核对连接目标。",
                 "构建失败：链接器找不到入口符号。",
             ],

@@ -55,9 +55,7 @@ DXGI 屏幕画面 + WASAPI 系统音频
 
 - 64 位 Windows 10/11；
 - 至少 12 GiB 可用磁盘空间和可用网络；
-- 推荐 NVIDIA GPU 与 CUDA 12.8 以上版本；无 NVIDIA GPU 时会使用 CPU，但速度较慢。
-
-首次启动会检查 Python 3.12+、Git、CMake、Visual Studio 2022 C++ Build Tools 和 CUDA。缺少组件时会通过 `winget` 自动安装，期间可能出现 UAC 提示或需要重启。
+- 支持 AVX2 指令集的 x64 处理器；安装包使用兼容性优先的 CPU 推理运行时，速度取决于处理器性能。
 
 ### 使用安装包（推荐）
 
@@ -65,11 +63,11 @@ DXGI 屏幕画面 + WASAPI 系统音频
 2. 运行安装程序并完成安装；
 3. 启动 AI Jarvis，点击“启动 AI 贾维斯”。
 
-安装包不包含模型权重。首次启动会自动下载并校验约 6.32 GiB 的 MiniCPM-o 4.5 模型，同时准备本地运行环境；具体耗时取决于网络和硬件性能。
+安装包已经包含 Python 后端和编译好的 C++ 推理运行时，不需要安装 Python、Git、CMake、Visual Studio 或 CUDA。安装包不包含模型权重；首次点击“启动 AI 贾维斯”会自动下载、断点续传并校验约 6.32 GiB 的 MiniCPM-o 4.5 模型，之后可直接启动。模型、记忆和课程工作数据保存在 `%LOCALAPPDATA%\AIJarvis`。
 
 ### 从源码启动
 
-源码运行还需要安装 Node.js 当前 LTS 版本与 npm。克隆仓库并进入项目根目录后执行：
+源码运行需要 Python 3.12+、Git、CMake 3.24+、Visual Studio 2022 C++ Build Tools、Node.js 当前 LTS 版本与 npm。源码启动器可选用 NVIDIA CUDA，也可以使用 CPU。克隆仓库并进入项目根目录后执行：
 
 ```powershell
 cd desktop
@@ -80,6 +78,17 @@ cd ..
 
 打开桌面端后点击“启动 AI 贾维斯”。启动完成后可拖拽桌宠调整位置，按 `Ctrl+M` 打开或关闭桌宠对话框。
 
+### 构建 Windows 安装包
+
+发布构建只在维护者机器上需要 Python 与 C++ 工具链。以下命令会构建静态 MSVC/CPU 原生运行时、冻结 Python 后端，并生成 NSIS 安装程序：
+
+```powershell
+cd desktop
+npm run deps:install
+npm run build
+```
+
+产物位于 `desktop/dist/AI-Jarvis-Setup-<版本>-x64.exe`。发布构建不会把源码、编译器或本地运行数据装入安装包。
 
 ## 项目组成
 
@@ -97,3 +106,5 @@ cd ..
 ## 许可证
 
 本项目源代码采用 [MIT License](LICENSE)。
+
+参与开发前请阅读 [贡献指南](CONTRIBUTING.md)，安全问题请按 [安全策略](SECURITY.md) 私下报告。第三方组件及模型许可边界见 [第三方声明](THIRD_PARTY_NOTICES.md)。

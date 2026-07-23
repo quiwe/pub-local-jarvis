@@ -110,6 +110,13 @@ function backendRoot() {
     : path.resolve(__dirname, "..", "..");
 }
 
+function backendDataRoot() {
+  const localAppData = process.env.LOCALAPPDATA;
+  return localAppData
+    ? path.join(localAppData, "AIJarvis")
+    : path.join(app.getPath("userData"), "backend-data");
+}
+
 function send(window, channel, payload) {
   if (window && !window.isDestroyed()) window.webContents.send(channel, payload);
 }
@@ -656,7 +663,12 @@ app.whenReady().then(() => {
   imageSettings = loadImageSettings(imageSettingsPath, decryptApiKey);
   state.gameProfile = selectedGameProfile().name;
   const useFake = process.env.JARVIS_DESKTOP_USE_FAKE === "1";
-  manager = new BackendManager({ backendRoot: backendRoot(), useFake });
+  manager = new BackendManager({
+    backendRoot: backendRoot(),
+    dataRoot: backendDataRoot(),
+    packaged: app.isPackaged,
+    useFake,
+  });
   manager.on("progress", message => send(launcherWindow, "jarvis:progress", message));
   manager.on("event", handleBackendEvent);
   manager.on("error", error => publishState({ phase: "error", error: error.message }));

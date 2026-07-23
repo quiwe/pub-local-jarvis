@@ -1,7 +1,28 @@
 "use strict";
 
 const path = require("node:path");
-const { executeWithFallback, resourceEnvironments } = require("./resource-fallback");
+const {
+  executeWithFallback,
+  resourceEnvironments,
+  runCommand,
+} = require("./resource-fallback");
+
+function prepareReleaseAttempt(environment = process.env) {
+  return {
+    command: "powershell.exe",
+    args: [
+      "-NoLogo",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      path.join(__dirname, "prepare-release.ps1"),
+    ],
+    cwd: path.join(__dirname, "..", ".."),
+    env: environment,
+    label: "Release runtime preparation",
+  };
+}
 
 function createBuildAttempts(environment = process.env) {
   const { primary, mirror, fallbackEnabled } = resourceEnvironments(environment);
@@ -19,10 +40,15 @@ function createBuildAttempts(environment = process.env) {
 }
 
 if (require.main === module) {
-  executeWithFallback(createBuildAttempts()).catch((error) => {
+  const preparation = prepareReleaseAttempt();
+  runCommand(
+    preparation.command,
+    preparation.args,
+    preparation,
+  ).then(() => executeWithFallback(createBuildAttempts())).catch((error) => {
     console.error(error.message);
     process.exitCode = 1;
   });
 }
 
-module.exports = { createBuildAttempts };
+module.exports = { createBuildAttempts, prepareReleaseAttempt };

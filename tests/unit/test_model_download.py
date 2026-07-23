@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import traceback
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from jarvis_backend import model_download
 from jarvis_backend.model_download import download_models, endpoint_candidates
 
 
@@ -74,3 +76,29 @@ def test_model_download_redacts_token_from_final_error(tmp_path: Path) -> None:
     assert "[redacted]" in str(error.value)
     rendered = "".join(traceback.format_exception(error.value))
     assert token not in rendered
+
+
+def test_model_validation_and_marker_use_the_pinned_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b"portable-model"
+    digest = __import__("hashlib").sha256(payload).hexdigest()
+    monkeypatch.setattr(
+        model_download,
+        "MODEL_FILES",
+        (("vision/model.gguf", len(payload), digest),),
+    )
+    model_path = tmp_path / "vision" / "model.gguf"
+    model_path.parent.mkdir(parents=True)
+    model_path.write_bytes(payload)
+
+    assert model_download.model_files_are_valid(tmp_path)
+    assert model_download.model_files_are_valid(tmp_path, verify_hashes=True)
+    assert not model_download.model_marker_is_valid(tmp_path)
+
+    model_download.write_model_marker(tmp_path)
+
+    assert model_download.model_marker_is_valid(tmp_path)
+    marker = json.loads((tmp_path / model_download.MODEL_MARKER).read_text(encoding="utf-8"))
+    assert marker["revision"] == model_download.MODEL_REVISION
+    assert marker["files"] == {"vision/model.gguf": digest}

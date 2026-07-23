@@ -18,10 +18,16 @@ function throwIfCancelled(signal) {
   if (signal?.aborted) throw new StartCancelledError();
 }
 
-function backendLaunchSpec(backendRoot, useFake) {
+function backendLaunchSpec(backendRoot, useFake, packaged = false) {
   if (useFake) {
     return {
       executable: path.join(backendRoot, ".venv", "Scripts", "jarvis-backend.exe"),
+      args: [],
+    };
+  }
+  if (packaged) {
+    return {
+      executable: path.join(backendRoot, "runtime", "jarvis-launcher.exe"),
       args: [],
     };
   }
@@ -44,6 +50,8 @@ class BackendManager extends EventEmitter {
     super();
     this.baseUrl = options.baseUrl || "http://127.0.0.1:8000";
     this.backendRoot = options.backendRoot;
+    this.dataRoot = options.dataRoot;
+    this.packaged = options.packaged === true;
     this.useFake = options.useFake === true;
     this.child = null;
     this.ownsBackend = false;
@@ -92,7 +100,7 @@ class BackendManager extends EventEmitter {
       this.connectEvents();
       return { owned: false };
     }
-    this.emit("progress", this.useFake ? "正在启动开发后端" : "正在准备本地模型与运行环境");
+    this.emit("progress", this.useFake ? "正在启动开发后端" : "正在检查本地模型与运行时");
     throwIfCancelled(signal);
     this.spawnBackend();
     const deadline = Date.now() + 15 * 60 * 1000;
@@ -145,11 +153,19 @@ class BackendManager extends EventEmitter {
 
   spawnBackend() {
     if (this.child && this.child.exitCode === null) return;
-    const { executable, args } = backendLaunchSpec(this.backendRoot, this.useFake);
+    const { executable, args } = backendLaunchSpec(
+      this.backendRoot,
+      this.useFake,
+      this.packaged,
+    );
     this.child = spawn(executable, args, {
       cwd: this.backendRoot,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        ...(this.dataRoot ? { JARVIS_DATA_ROOT: this.dataRoot } : {}),
+      },
     });
     const forward = chunk => {
       const text = chunk.toString("utf8").replace(/\x1b\[[0-9;]*m/g, "").trim();

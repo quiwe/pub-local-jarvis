@@ -93,6 +93,14 @@ test("memory helpers use the daily memory API", async () => {
   assert.equal(imageRequest.timeout, 10 * 60 * 1000);
 });
 
+test("the packaged app launches its bundled runtime directly", () => {
+  const root = "C:\\Program Files\\AI Jarvis\\resources\\backend";
+  const spec = backendLaunchSpec(root, false, true);
+
+  assert.equal(spec.executable, `${root}\\runtime\\jarvis-launcher.exe`);
+  assert.deepEqual(spec.args, []);
+});
+
 test("pet chat uses the dedicated assistant endpoint", async () => {
   const manager = new BackendManager({ backendRoot: process.cwd() });
   let request;
