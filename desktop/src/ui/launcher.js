@@ -522,7 +522,7 @@ profileSelect.addEventListener("change", () => {
 });
 $("#profile-add").addEventListener("click", () => {
   const id = `custom-${Date.now()}`;
-  gameProfiles.push({ id, name: "新游戏", prompt: "结合当前游戏画面，给出简短、准确、自然的陪伴弹幕。", builtIn: false });
+  gameProfiles.push({ id, name: "新游戏", prompt: "领域关注：本游戏的目标、资源、风险和刚发生的结果。表达风格：像熟悉游戏的朋友。", builtIn: false });
   renderProfileEditor({ selectedId: id, profiles: gameProfiles }, false);
   setProfileDirty(true);
   profileName.select();

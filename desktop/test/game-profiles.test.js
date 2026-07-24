@@ -18,8 +18,12 @@ test("game profiles include all built-in profiles", () => {
   assert.equal(settings.selectedId, "minecraft");
   assert.deepEqual(settings.profiles.map(profile => profile.name), ["我的世界", "植物大战僵尸", "胡闹厨房"]);
   assert.equal(settings.profiles.every(profile => profile.builtIn), true);
-  assert.match(PLANTS_VS_ZOMBIES_PROMPT, /阳光储备与产能/);
-  assert.match(OVERCOOKED_PROMPT, /只给一个最高优先级/);
+  assert.match(PLANTS_VS_ZOMBIES_PROMPT, /阳光产能/);
+  assert.match(OVERCOOKED_PROMPT, /只给当前最高优先级/);
+  assert.equal(settings.profiles.every(profile => profile.prompt.includes("领域关注：")), true);
+  assert.equal(settings.profiles.every(profile => profile.prompt.includes("表达风格：")), true);
+  assert.equal(settings.profiles.every(profile => profile.prompt.length < 180), true);
+  assert.equal(settings.profiles.every(profile => !profile.prompt.includes("不要虚构")), true);
 });
 
 test("selected profile and edited prompts persist", () => {
@@ -49,6 +53,25 @@ test("new built-in profiles are added to settings saved by older versions", () =
   const loaded = loadSettings(file);
   assert.deepEqual(loaded.profiles.map(profile => profile.id), ["minecraft", "plants-vs-zombies", "overcooked"]);
   assert.equal(loaded.profiles[0].prompt, "保留旧提示词");
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test("legacy built-in defaults upgrade without replacing user edits", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-game-profiles-"));
+  const file = path.join(directory, "profiles.json");
+  const legacyMinecraftPrompt = "你正在陪伴用户游玩《我的世界》。结合画面判断生存、建造、探索、采集、战斗或红石等阶段，优先关注生命与饥饿、装备耐久、资源、时间、坐标、敌对生物和环境风险。弹幕要像熟悉游戏的朋友：信息明确时给简短实用的提醒，精彩或失误时自然接梗；不要虚构版本机制、物品或画面外事件，不确定时只对局势作保留式回应。";
+  fs.writeFileSync(file, JSON.stringify({
+    selectedId: "minecraft",
+    profiles: [
+      { id: "minecraft", name: "我的世界", prompt: legacyMinecraftPrompt, builtIn: true },
+      { id: "plants-vs-zombies", name: "植物大战僵尸", prompt: "用户定制内容", builtIn: true },
+    ],
+  }), "utf8");
+
+  const loaded = loadSettings(file);
+  assert.notEqual(loaded.profiles[0].prompt, legacyMinecraftPrompt);
+  assert.match(loaded.profiles[0].prompt, /领域关注：/);
+  assert.equal(loaded.profiles[1].prompt, "用户定制内容");
   fs.rmSync(directory, { recursive: true, force: true });
 });
 

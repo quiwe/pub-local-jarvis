@@ -78,7 +78,7 @@ class Worker {
   std::string previous_scene_{};
   std::string game_profile_name_{};
   std::string game_profile_prompt_{};
-  std::size_t game_barrage_angle_index_{};
+  std::size_t game_barrage_variant_index_{};
   std::atomic_uint64_t observation_id_{std::uint64_t{1} << 63U};
   void emit_monitoring_event(std::string payload);
 #endif

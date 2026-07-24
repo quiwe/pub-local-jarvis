@@ -190,10 +190,11 @@ async def test_daily_image_generates_missing_summary_and_preserves_history(
         first["filename"],
     ]
     _, prompt, image_references = generation_calls[0]
-    assert "当前日期是 2026-07-17" in prompt
+    assert "2026-07-17" in prompt
+    assert "横向卡通日程信息图" in prompt
     assert "09:00至10:30，完成全双工文本链路验证" in prompt
-    assert "形象见图片1" in prompt
-    assert "图片2的风格" in prompt
+    assert "第一张参考图只决定 AI 贾维斯的角色外形" in prompt
+    assert "第二张参考图决定构图、配色、线条和质感" in prompt
     assert [path.name for path in image_references] == [
         "jarvis-character-reference.png",
         "jarvis-style-reference.png",

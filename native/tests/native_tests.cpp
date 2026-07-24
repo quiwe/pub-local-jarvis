@@ -87,7 +87,8 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
                               [](float sample) { return sample != 0.0F; });
       prompts_[request.id] = request.prompt;
       max_output_tokens_[request.id] = request.max_output_tokens;
-      if (request.prompt.find("统一实时感知器") != std::string::npos) {
+      if (request.prompt.find("实时感知器") != std::string::npos ||
+          request.prompt.find("低延迟游戏感知器") != std::string::npos) {
         perception_index = ++unified_perception_count_;
       }
     }
@@ -103,7 +104,7 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
               false};
     }
     return {request.id,
-            R"({"scene":"game","confidence":0.92,"scene_evidence":{"game_surface":true,"interactive_gameplay":true,"game_video_or_stream":false,"fullscreen_game_media":false,"active_instruction":false,"course_surface":false,"instructional_audio":false,"ordinary_browsing":false,"non_game_surface":false},"observation":"玩家继续推进并观察资源","barrage_candidates":["换个对象：主动避开最近弹幕反复关注的主体，从其他可靠信息切入。","长官，路线清楚了，稳住推进","资源够用，这波节奏别断","视野打开了，先盯住侧面"],"course_transcript":"","course_note":"","course_title":"","course_interaction":"","capture_keyframe":false,"keyframe_note":"","assistant_message":""})",
+            R"({"scene":"game","confidence":0.92,"scene_evidence":{"game_surface":true,"interactive_gameplay":true,"game_video_or_stream":false,"fullscreen_game_media":false,"active_instruction":false,"course_surface":false,"instructional_audio":false,"ordinary_browsing":false,"non_game_surface":false},"observation":"玩家继续推进并观察资源","barrage_candidates":["长官，路线清楚了，稳住推进","长官，路线清楚了，稳住推进","资源够用，这波节奏别断","视野打开了，先盯住侧面"],"course_transcript":"","course_note":"","course_title":"","course_interaction":"","capture_keyframe":false,"keyframe_note":"","assistant_message":""})",
             false};
   }
   bool start_duplex(std::string instruction) override {
@@ -159,78 +160,81 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
   }
   bool received_perception() {
     std::lock_guard lock(mutex_);
-    bool isolated_profile_on_initial_game = false;
+    bool isolated_profile_on_initial_classification = false;
     bool profiled_game_continuity = false;
+    std::size_t unified_prompt_bytes{};
+    std::size_t compact_game_prompt_bytes{};
     for (const auto& [id, prompt] : prompts_) {
       if (id < (std::uint64_t{1} << 63U)) continue;
-      if (prompt.find("统一实时感知器") != std::string::npos &&
+      if (prompt.find("实时感知器") != std::string::npos &&
           prompt.find("场景判定") != std::string::npos &&
           prompt.find("scene_evidence") != std::string::npos &&
           prompt.find("game_surface") != std::string::npos &&
           prompt.find("non_game_surface") != std::string::npos &&
           prompt.find("fullscreen_game_media") != std::string::npos &&
           prompt.find("course_interaction") != std::string::npos &&
-          prompt.find("全屏播放的游戏视频") != std::string::npos &&
-          prompt.find("仅有游戏风格画面") != std::string::npos &&
-          prompt.find("网页内播放器、攻略搜索或详情页") != std::string::npos &&
-          prompt.find("搜索结果、与音频无关的普通网页") != std::string::npos &&
-          prompt.find("老师或讲师不需要出现在画面中") != std::string::npos &&
-          prompt.find("静态 PPT 或笔记") != std::string::npos &&
-          prompt.find("结合两种模态交叉验证") != std::string::npos &&
-          prompt.find("视频理解规则") != std::string::npos &&
-          prompt.find("至少找到两项相互一致的内容锚点") !=
+          prompt.find("当前证据优先") != std::string::npos &&
+          prompt.find("其他生成字段只能使用 observation 中的事实") !=
               std::string::npos &&
-          prompt.find("孤立字幕、标题、封面或控件不足以推断") !=
+          prompt.find("至少两项一致锚点") != std::string::npos &&
+          prompt.find("互动游戏直接依据当前帧") != std::string::npos &&
+          prompt.find("启动器、商店、游戏库") != std::string::npos &&
+          prompt.find("静态课件与授课音频主题一致") != std::string::npos &&
+          prompt.find("判断、态度、提醒、建议或克制吐槽") !=
               std::string::npos &&
-          prompt.find("assistant_message 必须是 8 至 40 个汉字") !=
+          prompt.find("普通视频或直播的回复由全双工通道负责") !=
               std::string::npos &&
-          prompt.find("不要仅因发生切换就发言") != std::string::npos &&
-          prompt.find("也是重新判断信号") !=
+          prompt.find("不要因画面切换而强行发言") != std::string::npos &&
+          prompt.find("用户正在做什么") !=
+              std::string::npos &&
+          prompt.find("页面上有什么") !=
               std::string::npos &&
           prompt.find("barrage_candidates") != std::string::npos &&
           prompt.find("\"observation\":\"\"") <
               prompt.find("\"barrage_candidates\":[]") &&
-          prompt.find("后续内容唯一允许使用的事实底稿") != std::string::npos &&
-          prompt.find("值为 false 的键必须省略") != std::string::npos &&
-          prompt.find("去掉角色口吻后") != std::string::npos &&
-          prompt.find("禁止输出脱离具体对象和原因") != std::string::npos &&
-          prompt.find("assistant_message") != std::string::npos &&
-          prompt.find("Steam 等游戏启动器") != std::string::npos &&
-          prompt.find("上一轮已验证场景是 game") == std::string::npos &&
-          prompt.find("分类完成前禁止读取此块") != std::string::npos &&
-          prompt.find("不得用此块推断 game") != std::string::npos &&
-          prompt.find("<game_profile>专业毒舌嘴臭教练") != std::string::npos &&
-          prompt.find("结尾必须称呼长官</game_profile>") != std::string::npos &&
-          prompt.find("本轮游戏弹幕主角度") != std::string::npos &&
-          prompt.find("仅用于内部构思，不是可输出文本") !=
-              std::string::npos &&
-          prompt.find("禁止在 barrage_candidates 中复述或改写") !=
-              std::string::npos &&
+          prompt.find("<game_profile>") == std::string::npos &&
+          prompt.find("本轮游戏弹幕主角度") == std::string::npos &&
+          prompt.size() < 7000 &&
           prompt.find(std::string(5000, 'x')) == std::string::npos) {
-        isolated_profile_on_initial_game = true;
+        isolated_profile_on_initial_classification = true;
+        unified_prompt_bytes = prompt.size();
       }
-      if (prompt.find("统一实时感知器") != std::string::npos &&
-          prompt.find("上一轮已验证场景是 game") != std::string::npos &&
-          prompt.find("游戏陪伴方案才成为 barrage_candidates 的表达规范") !=
+      if (prompt.find("低延迟游戏感知器") != std::string::npos &&
+          prompt.find("一次推理直接返回合法 JSON") != std::string::npos &&
+          prompt.find("不等待后续时间片") != std::string::npos &&
+          prompt.find("互动游戏直接使用当前帧") != std::string::npos &&
+          prompt.find("所有生成内容只能使用这些事实") !=
               std::string::npos &&
-          prompt.find("每轮必须返回完全相同的字段和类型") != std::string::npos &&
+          prompt.find("互动游戏必须设置前两个 game 键") !=
+              std::string::npos &&
           prompt.find("恰好 3 条非空") != std::string::npos &&
-          prompt.find("冷却、去重和是否展示由后端负责") != std::string::npos &&
-          prompt.find("本轮游戏弹幕主角度") != std::string::npos &&
+          prompt.find("本轮游戏弹幕主角度") == std::string::npos &&
           prompt.find("<game_profile>专业毒舌嘴臭教练") != std::string::npos &&
           prompt.find("中间的重复或次要要求已压缩") != std::string::npos &&
           prompt.find("结尾必须称呼长官</game_profile>") != std::string::npos &&
           prompt.find(std::string(5000, 'x')) == std::string::npos) {
-        profiled_game_continuity = true;
+        compact_game_prompt_bytes = prompt.size();
+        const auto profile_start = prompt.find("<game_profile>");
+        const auto profile_end = prompt.find("</game_profile>", profile_start);
+        if (profile_start != std::string::npos &&
+            profile_end != std::string::npos) {
+          compact_game_prompt_bytes -=
+              profile_end + std::string_view("</game_profile>").size() -
+              profile_start;
+        }
+        profiled_game_continuity = compact_game_prompt_bytes < 3500;
       }
     }
-    return isolated_profile_on_initial_game && profiled_game_continuity;
+    return isolated_profile_on_initial_classification &&
+           profiled_game_continuity && unified_prompt_bytes > 0 &&
+           compact_game_prompt_bytes > 0 &&
+           compact_game_prompt_bytes < unified_prompt_bytes;
   }
   bool unified_perception_uses_multimodal_context() {
     std::lock_guard lock(mutex_);
     for (const auto& [id, prompt] : prompts_) {
       if (id >= (std::uint64_t{1} << 63U) &&
-          prompt.find("统一实时感知器") != std::string::npos &&
+          prompt.find("实时感知器") != std::string::npos &&
           frame_contexts_.contains(id) && frame_contexts_[id] &&
           audio_contexts_.contains(id) && audio_contexts_[id] &&
           max_output_tokens_.contains(id) && max_output_tokens_[id] == 0) {
@@ -481,14 +485,14 @@ int main() {
   {
     std::lock_guard lock(native_event_mutex);
     require(std::ranges::any_of(perception_results, [](const auto& event) {
-              return event.find("长官，路线清楚了，稳住推进") !=
-                         std::string::npos &&
-                     event.find("换个对象：主动避开最近弹幕反复关注的主体") ==
+              return event.find(
+                         "\"barrage_candidates\":[\"长官，路线清楚了，稳住推进\","
+                         "\"资源够用，这波节奏别断\",\"视野打开了，先盯住侧面\"]") !=
                          std::string::npos &&
                      event.find("\"barrage_source\":\"model\"") !=
                          std::string::npos;
             }),
-            "the next unified game result carries model-generated candidates");
+            "the next game result deduplicates model-generated candidates");
   }
   require(recording_ptr->received_audible_perception(),
           "structured perception receives audible system audio");

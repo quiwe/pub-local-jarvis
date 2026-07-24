@@ -1,10 +1,11 @@
 "use strict";
 
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 
-const MINECRAFT_PROMPT = "你正在陪伴用户游玩《我的世界》。结合画面判断生存、建造、探索、采集、战斗或红石等阶段，优先关注生命与饥饿、装备耐久、资源、时间、坐标、敌对生物和环境风险。弹幕要像熟悉游戏的朋友：信息明确时给简短实用的提醒，精彩或失误时自然接梗；不要虚构版本机制、物品或画面外事件，不确定时只对局势作保留式回应。";
-const PLANTS_VS_ZOMBIES_PROMPT = "你正在陪伴用户游玩《植物大战僵尸》。结合画面判断关卡地形与昼夜、当前波次、僵尸路线和阵型阶段，优先关注阳光储备与产能、植物冷却、各路火力与防线缺口、特殊僵尸威胁、割草机以及下一波压力。信息明确时给一条能立刻执行的建议，例如补经济、留阳光、针对性补防，或把一次性植物留给尸潮，并点明最关键的理由；局势稳定时可点评阵型协同、资源效率，或提出一个简短的后续优化目标。精彩反杀、阵线崩口或有趣组合出现时，像懂游戏的朋友自然接梗，但不要刷屏或只喊情绪。不要凭空认定未显示的植物、僵尸、冷却、关卡规则或未来出怪；画面不清楚时用“可能”“留意”等保留表达，避免给出会破坏阵型的武断指令。";
-const OVERCOOKED_PROMPT = "你正在陪伴用户游玩《胡闹厨房》。结合画面判断订单队列、剩余时间、菜品工序、食材与厨具位置、灶台状态、厨房地形和玩家分工，优先发现即将超时或烧糊的任务、缺盘缺料、动线堵塞、空跑和重复劳动。信息明确时只给一个最高优先级、能立即执行的短建议，点明先后顺序，例如先出锅、装盘上菜、洗盘、灭火或为下一单备料；有余裕时再建议分区站位、流水线分工、交接点、批量备料或按订单顺序排程。救回险单、默契配合或厨房失控时可以自然接梗，语气像冷静又有趣的队友，不指责具体玩家，也不要连续发号施令。不要臆测画面外的订单、食材、队友意图或版本机制；看不清时只提醒可确认的风险，单人模式下也不要虚构队友。";
+const MINECRAFT_PROMPT = "领域关注：生存、建造、探索、采集、战斗或红石阶段；生命与饥饿、装备耐久、资源、时间、坐标、敌对生物和环境风险。表达风格：像熟悉《我的世界》的朋友，实用提醒与自然接梗并重。";
+const PLANTS_VS_ZOMBIES_PROMPT = "领域关注：关卡地形与昼夜、波次、僵尸路线、阳光产能、植物冷却、各路火力、防线缺口、特殊威胁和割草机。建议优先处理即将破线的威胁，其次优化经济与阵型，并点明一个关键理由；稳定时可点评阵型协同。表达风格：懂游戏、轻松直接。";
+const OVERCOOKED_PROMPT = "领域关注：订单与剩余时间、菜品工序、食材和厨具位置、灶台、地形及分工。建议只给当前最高优先级并说明先后顺序，优先处理超时、烧糊、缺盘缺料和动线堵塞；有余裕再谈分区与备料。表达风格：冷静有趣的队友，不指责具体玩家。";
 
 const builtInProfiles = [
   {
@@ -27,6 +28,17 @@ const builtInProfiles = [
   },
 ];
 const builtInIds = new Set(builtInProfiles.map(item => item.id));
+const legacyBuiltInPromptHashes = new Map([
+  ["minecraft", "862971bdd310551034a7b0f76b803c3209408c2239455280f62b5ec5977ee723"],
+  ["plants-vs-zombies", "1bd91a53d89500c96bd52283ab6776ac4c42efa1947f7e75d72c49c5fe8b872e"],
+  ["overcooked", "67d16cb8521475b3b0dd1ade93f2bc2fb87f73b97fc09a5cabf365f306d8a2a0"],
+]);
+
+function usesLegacyBuiltInPrompt(profile) {
+  const legacyHash = legacyBuiltInPromptHashes.get(profile.id);
+  if (!legacyHash) return false;
+  return crypto.createHash("sha256").update(profile.prompt, "utf8").digest("hex") === legacyHash;
+}
 
 function normalizeProfile(value, builtIn = false) {
   if (!value || typeof value !== "object") return null;
@@ -61,7 +73,13 @@ function loadSettings(filePath) {
   const profiles = [
     ...builtInProfiles
       .filter(profile => !deletedBuiltInIds.has(profile.id))
-      .map(profile => custom.find(item => item.id === profile.id) || { ...profile }),
+      .map(profile => {
+        const savedProfile = custom.find(item => item.id === profile.id);
+        if (!savedProfile) return { ...profile };
+        return usesLegacyBuiltInPrompt(savedProfile)
+          ? { ...savedProfile, prompt: profile.prompt }
+          : savedProfile;
+      }),
     ...custom.filter(item => !builtInIds.has(item.id)),
   ];
   if (!profiles.length) {

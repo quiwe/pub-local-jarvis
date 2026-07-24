@@ -1121,13 +1121,16 @@ def test_structured_perception_emits_grounded_ordinary_assistant_message(tmp_pat
         ]
 
 
-def test_ambient_duplex_requires_video_semantic_verification():
+def test_ambient_duplex_only_owns_temporal_video_commentary():
     instruction = service_module.AMBIENT_DUPLEX_INSTRUCTION
 
-    assert "视频必须先完成语义核对" in instruction
-    assert "至少找到两项相互一致的内容锚点" in instruction
-    assert "音画不一致或仍在转场时选择 listen" in instruction
-    assert "应回应视频实际内容，不要只点评播放器状态" in instruction
+    assert "唯一职责" in instruction
+    assert "桌面、静态网页、游戏和课程由结构化感知处理，一律 LISTEN" in instruction
+    assert "至少有两项一致锚点" in instruction
+    assert "标题、封面、播放器控件或孤立字幕不能单独证明" in instruction
+    assert "视频在播什么" in instruction
+    assert "而没有表达判断、态度或调侃，就必须 LISTEN" in instruction
+    assert len(instruction) < 500
 
 
 @pytest.mark.asyncio
@@ -1190,7 +1193,7 @@ def test_monitoring_automatically_manages_ambient_duplex(tmp_path):
         status = client.get("/api/v1/duplex").json()
         assert status["active"] is True
         assert status["session_id"] == "jarvis-ambient"
-        assert "应适度主动说一句自然点评" in status["instruction"]
+        assert "理解普通场景中正在播放的视频或直播" in status["instruction"]
 
         paused = client.post(
             "/api/v1/commands",
@@ -1758,6 +1761,18 @@ def test_duplex_messages_reject_narration_offers_and_uncertainty(tmp_path):
         assert orchestrator._clean_duplex_message(
             "新闻页面介绍的是示例主题。", require_proactive_value=False
         ) == ""
+        assert orchestrator._clean_duplex_message(
+            "好的，正在播放一部关于电影《美丽风景》的介绍视频。",
+            require_proactive_value=False,
+        ) == ""
+        assert orchestrator._clean_duplex_message(
+            "当前浏览bilibili视频评论区，页面显示多条评论和相关信息。",
+            require_proactive_value=False,
+        ) == ""
+        assert orchestrator._clean_duplex_message(
+            "评论区这火药味，比视频正片还足。",
+            require_proactive_value=False,
+        ) == "评论区这火药味，比视频正片还足。"
         assert orchestrator._clean_duplex_message(
             "同一个报错看第三遍也不会自己消失，先看第一条堆栈。",
             require_proactive_value=False,
