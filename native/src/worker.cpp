@@ -41,6 +41,22 @@ constexpr std::array<std::string_view, 6> kGameBarrageAngles{
     "换个对象：主动避开最近弹幕反复关注的主体，从其他可靠信息切入。",
 };
 
+bool is_game_barrage_angle_leak(std::string_view candidate) noexcept {
+  if (candidate.find("本轮游戏弹幕主角度") != std::string_view::npos) {
+    return true;
+  }
+  constexpr std::string_view separator{"："};
+  for (const auto angle : kGameBarrageAngles) {
+    if (candidate == angle) return true;
+    const auto separator_at = angle.find(separator);
+    if (separator_at == std::string_view::npos) continue;
+    const auto label = angle.substr(0, separator_at + separator.size());
+    const auto instruction = angle.substr(separator_at + separator.size());
+    if (candidate.starts_with(label) || candidate == instruction) return true;
+  }
+  return false;
+}
+
 #ifdef _WIN32
 bool is_game_launcher_window(std::uintptr_t window_value) noexcept {
   const auto window = reinterpret_cast<HWND>(window_value);
@@ -456,6 +472,8 @@ constexpr std::string_view kUnifiedPerceptionPrompt = R"(你是本地桌面助�
 
 证据规则：先扫描整个当前画面，确认主体和界面层级，再读角色或视角、正在发生的动作、HUD、文字、资源、威胁、位置与结果，最后结合音频和最近观察判断；不要抓住单个图标、字幕或局部文字仓促下结论。当前画面和音频优先，最近观察只用于确认连续变化，绝不能覆盖本轮画面。observation 所有场景都必须填写，并且是后续内容唯一允许使用的事实底稿，不得包含建议、角色语气或猜测。游戏场景用 24 至 60 个汉字写一条紧凑但具体的观察：至少记录两个当前可见锚点，优先包含“谁或什么、正在做什么、可见状态或结果”；只有确实可见时才写武器、技能、血量、资源、敌人和位置。其他场景用 20 至 100 个汉字记录。
 
+视频理解规则：遇到正在播放的视频、直播或回放，无论最终 scene 是什么，都必须先理解视频实际内容，再生成互动内容。先区分视频内容与播放器外壳、标题、评论、推荐列表和控制栏；再结合当前画面、系统音频与最近观察建立连续语义，依次核对“主体是谁或是什么、正在做什么、处于什么场景、正在表达或推进什么话题”。生成 barrage_candidates、course_note、course_interaction 或 assistant_message 前，至少找到两项相互一致的内容锚点，例如连续画面中的主体与动作、画面与字幕、画面与音频；单个瞬时画面、孤立字幕、标题、封面或控件不足以推断人物身份、情节、意图、因果或结论。音画不一致或仍在转场时，只记录能够确认的事实，不要用常识补全。若最终为 other 且尚未形成可靠理解，assistant_message 留空；若最终为 game，弹幕也只能评论 observation 中已经确认的当前内容，不得猜测剧情或玩家意图。
+
 场景判定：
 - course：必须有持续、明确的教学行为，而不只是出现知识、代码或“教程/课程”等文字。老师或讲师不需要出现在画面中，不得把“没有人像/老师未出镜”作为排除课程的理由。active_instruction 在系统音频中的讲师/旁白正在解释概念、步骤或例题时也应为 true；course_surface 在当前主体是 PPT/幻灯片、讲义、板书、电子或手写课堂笔记、课程播放器、课堂或教学演示时为 true；instructional_audio 仅在系统音频中存在连续授课、概念解释、步骤讲解或例题分析时为 true。应优先核对画面材料与音频讲解的主题、术语、公式或步骤是否一致：一致时，即使画面只有静态 PPT 或笔记，也应判为 course。搜索结果、与音频无关的普通网页/代码/文档、聊天、文件列表、新闻、影视对白、广告、音乐和娱乐视频均是 other。仅当 active_instruction=true 且 course_surface 或 instructional_audio 至少一个为 true 时才能判为 course。
 - game：game_surface 在主体是可辨认的运行中游戏世界、HUD、小地图、比分板、购买或装备界面、暂停或设置菜单、回合结算、死亡或胜负画面时为 true；属于正在运行游戏的全屏菜单也应延续 game。从非游戏场景首次进入 game 时，必须有 game_surface=true，且同时满足 interactive_gameplay=true，或 game_video_or_stream=true 与 fullscreen_game_media=true；仅有游戏风格画面或 game_surface=true 不足以首次进入 game。Steam 等游戏启动器、游戏库、商店、下载页、好友列表、启动按钮和桌面图标都不是运行中的游戏，必须设置 game_surface=false、interactive_gameplay=false、non_game_surface=true 并判为 other；不能因出现游戏封面、名称、预告片或“正在运行/启动”文字而判为 game。用户正在操控的实时游戏过程应同时设置 game_surface=true、interactive_gameplay=true 并判为 game；静止对峙、加载过场、回合结束、死亡画面或比分板只有在最近已经确认 game 时，才能凭 game_surface=true 延续 game，不得用它们单独开启游戏场景。全屏播放的游戏视频、直播或回放也可判为 game，但必须同时设置 game_surface=true、game_video_or_stream=true、fullscreen_game_media=true、interactive_gameplay=false；fullscreen_game_media 仅在连续游戏内容几乎占满整个屏幕，浏览器栏、标题区、评论区和播放器框架均不可见时为 true，短暂浮现的播放控件不影响此判断。网页内播放器、攻略搜索或详情页、预告片、带明显标题/评论区/主播版面的观看页面应设置 game_video_or_stream=true、fullscreen_game_media=false 并判为 other。
@@ -544,9 +562,10 @@ bool Worker::start(const std::string& model_path) {
                 for (const auto& candidate : candidates) {
                   if (!candidate.is_string()) continue;
                   const auto text = candidate.get<std::string>();
-                  if (text.empty() || std::find(normalized_candidates.begin(),
-                                                normalized_candidates.end(), text) !=
-                                          normalized_candidates.end()) {
+                  if (text.empty() || is_game_barrage_angle_leak(text) ||
+                      std::find(normalized_candidates.begin(),
+                                normalized_candidates.end(), text) !=
+                          normalized_candidates.end()) {
                     continue;
                   }
                   normalized_candidates.push_back(text);
@@ -1067,7 +1086,7 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
                 prompt += "。不得用此块推断 game、修改 confidence 或填写 scene_evidence。<game_profile>";
                 prompt += compact_game_profile(game_profile_prompt_);
                 prompt += "</game_profile>";
-                prompt += "\n本轮游戏弹幕主角度：";
+                prompt += "\n本轮游戏弹幕主角度（仅用于内部构思，不是可输出文本；禁止在 barrage_candidates 中复述或改写本标题及后面的说明）：";
                 prompt += kGameBarrageAngles[
                     game_barrage_angle_index_ % kGameBarrageAngles.size()];
                 ++game_barrage_angle_index_;

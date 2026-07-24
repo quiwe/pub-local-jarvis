@@ -103,7 +103,7 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
               false};
     }
     return {request.id,
-            R"({"scene":"game","confidence":0.92,"scene_evidence":{"game_surface":true,"interactive_gameplay":true,"game_video_or_stream":false,"fullscreen_game_media":false,"active_instruction":false,"course_surface":false,"instructional_audio":false,"ordinary_browsing":false,"non_game_surface":false},"observation":"玩家继续推进并观察资源","barrage_candidates":["长官，路线清楚了，稳住推进","资源够用，这波节奏别断","视野打开了，先盯住侧面"],"course_transcript":"","course_note":"","course_title":"","course_interaction":"","capture_keyframe":false,"keyframe_note":"","assistant_message":""})",
+            R"({"scene":"game","confidence":0.92,"scene_evidence":{"game_surface":true,"interactive_gameplay":true,"game_video_or_stream":false,"fullscreen_game_media":false,"active_instruction":false,"course_surface":false,"instructional_audio":false,"ordinary_browsing":false,"non_game_surface":false},"observation":"玩家继续推进并观察资源","barrage_candidates":["换个对象：主动避开最近弹幕反复关注的主体，从其他可靠信息切入。","长官，路线清楚了，稳住推进","资源够用，这波节奏别断","视野打开了，先盯住侧面"],"course_transcript":"","course_note":"","course_title":"","course_interaction":"","capture_keyframe":false,"keyframe_note":"","assistant_message":""})",
             false};
   }
   bool start_duplex(std::string instruction) override {
@@ -177,6 +177,11 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
           prompt.find("老师或讲师不需要出现在画面中") != std::string::npos &&
           prompt.find("静态 PPT 或笔记") != std::string::npos &&
           prompt.find("结合两种模态交叉验证") != std::string::npos &&
+          prompt.find("视频理解规则") != std::string::npos &&
+          prompt.find("至少找到两项相互一致的内容锚点") !=
+              std::string::npos &&
+          prompt.find("孤立字幕、标题、封面或控件不足以推断") !=
+              std::string::npos &&
           prompt.find("assistant_message 必须是 8 至 40 个汉字") !=
               std::string::npos &&
           prompt.find("不要仅因发生切换就发言") != std::string::npos &&
@@ -197,6 +202,10 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
           prompt.find("<game_profile>专业毒舌嘴臭教练") != std::string::npos &&
           prompt.find("结尾必须称呼长官</game_profile>") != std::string::npos &&
           prompt.find("本轮游戏弹幕主角度") != std::string::npos &&
+          prompt.find("仅用于内部构思，不是可输出文本") !=
+              std::string::npos &&
+          prompt.find("禁止在 barrage_candidates 中复述或改写") !=
+              std::string::npos &&
           prompt.find(std::string(5000, 'x')) == std::string::npos) {
         isolated_profile_on_initial_game = true;
       }
@@ -473,6 +482,8 @@ int main() {
     std::lock_guard lock(native_event_mutex);
     require(std::ranges::any_of(perception_results, [](const auto& event) {
               return event.find("长官，路线清楚了，稳住推进") !=
+                         std::string::npos &&
+                     event.find("换个对象：主动避开最近弹幕反复关注的主体") ==
                          std::string::npos &&
                      event.find("\"barrage_source\":\"model\"") !=
                          std::string::npos;

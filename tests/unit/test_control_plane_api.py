@@ -1121,6 +1121,15 @@ def test_structured_perception_emits_grounded_ordinary_assistant_message(tmp_pat
         ]
 
 
+def test_ambient_duplex_requires_video_semantic_verification():
+    instruction = service_module.AMBIENT_DUPLEX_INSTRUCTION
+
+    assert "视频必须先完成语义核对" in instruction
+    assert "至少找到两项相互一致的内容锚点" in instruction
+    assert "音画不一致或仍在转场时选择 listen" in instruction
+    assert "应回应视频实际内容，不要只点评播放器状态" in instruction
+
+
 @pytest.mark.asyncio
 async def test_ordinary_assistant_message_uses_sixteen_second_cooldown(tmp_path):
     settings = Settings(
