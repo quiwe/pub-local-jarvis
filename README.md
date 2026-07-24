@@ -5,8 +5,17 @@
   <p>面向 Windows · 本地多模态推理 · 桌宠交互 · 游戏陪伴 · 课程记录</p>
 </div>
 
-AI Jarvis 使用本地多模态模型持续理解桌面画面与系统播放音频，并根据当前场景，以桌宠气泡、游戏弹幕或课程笔记等方式提供帮助。日常的屏幕、音频感知与核心推理都在本机完成。
+<p align="center">
+  <a href="#功能亮点">功能亮点</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#隐私与数据">隐私与数据</a> ·
+  <a href="#工作原理">工作原理</a> ·
+  <a href="#开发与构建">开发与构建</a>
+</p>
 
+AI Jarvis 使用本地多模态模型持续理解桌面画面与系统播放音频，并根据当前场景，以桌宠气泡、游戏弹幕或课程笔记等方式提供帮助。
+
+日常的屏幕、音频感知与核心推理都在本机完成。
 
 ## 功能亮点
 
@@ -30,9 +39,9 @@ AI Jarvis 使用本地多模态模型持续理解桌面画面与系统播放音�
   <sub>可视化日程图示例</sub>
 </p>
 
-### 与AI贾维斯对话
+### 与 AI 贾维斯对话
 
-按 Ctrl+M 即可打开或关闭对话窗口，AI贾维斯会结合实时画面与你沟通。
+按 `Ctrl+M` 即可打开或关闭对话窗口，AI 贾维斯会结合实时画面与你沟通。
 
 <p align="center">
   <img src="docs/images/pet-chat.png" width="760" alt="AI Jarvis 桌宠与主动对话界面">
@@ -40,12 +49,11 @@ AI Jarvis 使用本地多模态模型持续理解桌面画面与系统播放音�
   <sub>桌宠与主动对话界面</sub>
 </p>
 
-
 ## 隐私与数据
 
-- 屏幕画面和系统音频仅用于即时推理，普通运行不会长期保存原始采集数据。
-- 课程模式只保存被选中的关键画面、整理后的知识点和画面说明。
-- 可视化日程是独立的可选能力；只有主动生成时，当日回顾和项目角色参考图才会发送到用户配置的图像 API。
+- **即时推理：** 屏幕画面和系统音频仅用于当前推理，普通运行不会长期保存原始采集数据。
+- **课程记录：** 课程模式只保存被选中的关键画面、整理后的知识点和画面说明。
+- **可选联网：** 只有主动生成可视化日程时，当日回顾和项目角色参考图才会发送到用户配置的图像 API。
 
 ## 快速开始
 
@@ -62,16 +70,22 @@ AI Jarvis 使用本地多模态模型持续理解桌面画面与系统播放音�
 2. 运行安装程序并完成安装。
 3. 启动 AI Jarvis，点击“启动 AI 贾维斯”。
 
-安装包已包含 Python 后端和编译好的 C++ 推理运行时，不需要额外安装 Python、Git、CMake、Visual Studio 或 CUDA。模型权重不包含在安装包中；首次启动会自动下载、断点续传并校验 MiniCPM-o 4.5 模型，之后可直接运行。
+安装包已包含 Python 后端和编译好的 C++ 推理运行时，不需要额外安装 Python、Git、CMake、Visual Studio 或 CUDA。
 
-> 安装版会优先尝试随包携带的 NVIDIA CUDA 推理运行时，并根据可用显存自动决定 GPU
-> 卸载量。CUDA 初始化失败或没有兼容的 NVIDIA 显卡时会自动回退到 CPU，桌宠会明确提示
-> 当前处于 CPU 模式，此时文本生成和持续感知速度会明显下降。
+模型权重不包含在安装包中。首次启动会自动下载、断点续传并校验 MiniCPM-o 4.5 模型，完成后即可直接运行。
 
-### Windows 前置依赖与故障排查
+> **GPU 加速说明**
+>
+> 安装版会优先使用随包携带的 NVIDIA CUDA 推理运行时，并根据可用显存自动决定 GPU 卸载量。CUDA 初始化失败或没有兼容的 NVIDIA 显卡时，程序会自动回退到 CPU 并通过桌宠提示；此时文本生成和持续感知速度会明显下降。
 
-正常情况下先直接安装并启动，不要预先安装 Python、CMake 或 Visual Studio。只有启动失败、
-CUDA 自动回退，或日志明确提示缺少 DLL 时，再按下面的顺序处理。
+### 遇到启动问题？
+
+正常情况下直接安装并启动即可，无需预先安装 Python、CMake 或 Visual Studio。只有启动失败、CUDA 自动回退，或日志明确提示缺少 DLL 时，再展开下面的排查步骤。
+
+<details>
+<summary><strong>展开 Windows 前置依赖与故障排查</strong></summary>
+
+<br>
 
 #### 1. 所有 Windows 用户
 
@@ -128,11 +142,13 @@ RTX 50 系列建议使用 CUDA 13.x 和最新驱动。8 GiB 显存不应强制�
 | 模型校验失败 | 退出程序，删除不完整的模型目录后重新下载 |
 | 日志长时间停在视觉或音频编码 | 通常是 CPU 回退；先修复 CUDA，或等待当前推理完成 |
 
+</details>
+
 ### 从源码启动
 
-源码运行需要 Python 3.12+、Git、CMake 3.24+、Visual Studio C++ Build Tools、Node.js
-当前 LTS 版本与 npm。构建 Windows 安装包还需要 CUDA Toolkit 13.1 或更新版本；CUDA 运行库
-会被复制进安装包，最终用户不需要安装 Toolkit。
+源码运行需要 Python 3.12+、Git、CMake 3.24+、Visual Studio C++ Build Tools、Node.js 当前 LTS 版本与 npm。
+
+构建 Windows 安装包还需要 CUDA Toolkit 13.1 或更新版本。CUDA 运行库会被复制进安装包，最终用户不需要安装 Toolkit。
 
 在项目根目录执行：
 
@@ -147,12 +163,16 @@ cd ..
 
 ## 工作原理
 
-项目使用 **MiniCPM-o 4.5** GGUF 模型，由语言模型（LLM）、视觉模型（VPM）和音频模型（APM）共同处理文字、屏幕与声音。模型约每秒接收一帧画面和最近一秒的系统音频，并持续选择：
+项目使用 **MiniCPM-o 4.5** GGUF 模型，由语言模型（LLM）、视觉模型（VPM）和音频模型（APM）共同处理文字、屏幕与声音。
+
+模型约每秒接收一帧画面和最近一秒的系统音频，并持续选择：
 
 - `LISTEN`：继续观察，不打扰用户；
 - `SPEAK`：输出一句有当前画面或声音依据的简短文字。
 
-这不是传统的“一问一答”。输入流会持续推进，模型可以等到真正需要介入时再响应。结构化场景判断与全双工对话使用彼此隔离的模型上下文：
+这不是传统的“一问一答”。输入流会持续推进，模型可以等到真正需要介入时再响应。
+
+结构化场景判断与全双工对话使用彼此隔离的模型上下文：
 
 ```text
 DXGI 屏幕画面 + WASAPI 系统音频
@@ -206,8 +226,9 @@ AIJarvis/
 
 ## 致谢
 
-- [tc-mb/llama.cpp-omni](https://github.com/tc-mb/llama.cpp-omni)：提供基于 llama.cpp / ggml 的 MiniCPM-o GGUF 本地推理能力。本项目固定了上游版本，并以关闭语音输出的方式接入 LLM、VPM 与 APM。
-- [OpenBMB/MiniCPM-V](https://github.com/OpenBMB/MiniCPM-V)：MiniCPM-V / MiniCPM-o 官方项目；本项目使用其 MiniCPM-o 4.5 多模态与全双工能力。
+- **[tc-mb/llama.cpp-omni](https://github.com/tc-mb/llama.cpp-omni)**：提供基于 llama.cpp / ggml 的 MiniCPM-o GGUF 本地推理能力。本项目固定了上游版本，并以关闭语音输出的方式接入 LLM、VPM 与 APM。
+
+- **[OpenBMB/MiniCPM-V](https://github.com/OpenBMB/MiniCPM-V)**：MiniCPM-V / MiniCPM-o 官方项目；本项目使用其 MiniCPM-o 4.5 多模态与全双工能力。
 
 ## 许可证
 
