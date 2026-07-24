@@ -50,7 +50,7 @@ class BarrageSettings(BaseModel):
 
 
 class InteractionSettings(BaseModel):
-    ordinary_bubble_cooldown_seconds: float = Field(default=20.0, ge=0)
+    ordinary_bubble_cooldown_seconds: float = Field(default=16.0, ge=0)
     course_bubble_cooldown_seconds: float = Field(default=30.0, ge=0)
     game_barrage_repeat_seconds: float = Field(default=20.0, ge=0)
     game_barrage_similar_seconds: float = Field(default=4.0, ge=0)

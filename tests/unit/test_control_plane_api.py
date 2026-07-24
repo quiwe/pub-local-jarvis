@@ -1121,6 +1121,37 @@ def test_structured_perception_emits_grounded_ordinary_assistant_message(tmp_pat
         ]
 
 
+@pytest.mark.asyncio
+async def test_ordinary_assistant_message_uses_sixteen_second_cooldown(tmp_path):
+    settings = Settings(
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(sessions_root=tmp_path / "sessions"),
+    )
+    orchestrator = create_app(settings=settings).state.orchestrator
+    assert settings.interaction.ordinary_bubble_cooldown_seconds == 16.0
+
+    await orchestrator._emit_ordinary_perception_message(
+        {"assistant_message": "下载任务已经完成，文件可以直接使用。", "confidence": 0.9},
+        100.0,
+    )
+    await orchestrator._emit_ordinary_perception_message(
+        {"assistant_message": "文章切到新章节，关键定义值得留意。", "confidence": 0.9},
+        115.9,
+    )
+    await orchestrator._emit_ordinary_perception_message(
+        {"assistant_message": "视频转入实测环节，先看数据变化。", "confidence": 0.9},
+        116.0,
+    )
+
+    assert [
+        event.payload["text"]
+        for event in orchestrator.events.history("assistant.message")
+    ] == [
+        "下载任务已经完成，文件可以直接使用。",
+        "视频转入实测环节，先看数据变化。",
+    ]
+
+
 def test_monitoring_automatically_manages_ambient_duplex(tmp_path):
     with make_client(tmp_path) as client:
         native = client.app.state.orchestrator.native_client

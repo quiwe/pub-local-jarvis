@@ -179,6 +179,9 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
           prompt.find("结合两种模态交叉验证") != std::string::npos &&
           prompt.find("assistant_message 必须是 8 至 40 个汉字") !=
               std::string::npos &&
+          prompt.find("不要仅因发生切换就发言") != std::string::npos &&
+          prompt.find("也是重新判断信号") !=
+              std::string::npos &&
           prompt.find("barrage_candidates") != std::string::npos &&
           prompt.find("\"observation\":\"\"") <
               prompt.find("\"barrage_candidates\":[]") &&

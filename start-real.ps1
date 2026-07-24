@@ -1043,7 +1043,7 @@ game_uncertain_exit_samples = 2
 root = "$(Convert-ToTomlPath (Join-Path $ProjectRoot 'memory'))"
 
 [interaction]
-ordinary_bubble_cooldown_seconds = 20.0
+ordinary_bubble_cooldown_seconds = 16.0
 course_bubble_cooldown_seconds = 30.0
 game_barrage_repeat_seconds = 20.0
 game_barrage_similar_seconds = 4.0

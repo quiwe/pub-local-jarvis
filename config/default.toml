@@ -33,7 +33,7 @@ max_age_seconds = 8.0
 max_queue_size = 256
 
 [interaction]
-ordinary_bubble_cooldown_seconds = 20.0
+ordinary_bubble_cooldown_seconds = 16.0
 course_bubble_cooldown_seconds = 30.0
 game_barrage_repeat_seconds = 20.0
 game_barrage_similar_seconds = 4.0
