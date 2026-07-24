@@ -32,7 +32,7 @@ class SceneSettings(BaseModel):
     enter_samples: int = Field(default=3, ge=1)
     exit_samples: int = Field(default=4, ge=1)
     display_enter_samples: int = Field(default=2, ge=1)
-    game_enter_samples: int = Field(default=1, ge=1)
+    game_enter_samples: int = Field(default=2, ge=1)
     display_exit_samples: int = Field(default=2, ge=1)
     game_exit_samples: int = Field(default=1, ge=1)
     game_uncertain_exit_samples: int = Field(default=2, ge=1)

@@ -1238,15 +1238,6 @@ class OrchestrationService:
         game_surface = scene_evidence["game_surface"]
         passive_game_media = scene_evidence["game_video_or_stream"]
         fullscreen_game_media = scene_evidence["fullscreen_game_media"]
-        if (
-            scene == "other"
-            and confidence >= 0.72
-            and game_surface
-            and not scene_evidence["non_game_surface"]
-            and not scene_evidence["ordinary_browsing"]
-            and (not passive_game_media or fullscreen_game_media)
-        ):
-            scene = "game"
         if scene == "game":
             interactive = scene_evidence["interactive_gameplay"]
             if not evidence and (
@@ -1322,6 +1313,17 @@ class OrchestrationService:
             "keyframe_note": str(value.get("keyframe_note", "")).strip()[:300],
             "assistant_message": assistant_message[:500],
         }
+
+    @staticmethod
+    def _has_game_entry_evidence(result: dict[str, Any]) -> bool:
+        evidence = result["scene_evidence"]
+        return evidence["game_surface"] and (
+            evidence["interactive_gameplay"]
+            or (
+                evidence["game_video_or_stream"]
+                and evidence["fullscreen_game_media"]
+            )
+        )
 
     @staticmethod
     def _recover_truncated_perception(source: str) -> dict[str, Any]:
@@ -1500,6 +1502,19 @@ class OrchestrationService:
             return
 
         scene = result["scene"]
+        game_entry_rejected = (
+            scene == "game"
+            and self.display_scene.current != "game"
+            and not self._has_game_entry_evidence(result)
+        )
+        if game_entry_rejected:
+            scene = "other"
+            result["barrage"] = ""
+            result["barrage_candidates"] = []
+            result["barrage_pending"] = False
+            result["barrage_source"] = ""
+            result["barrage_fallback_reason"] = ""
+        result["game_entry_rejected"] = game_entry_rejected
         now = time.monotonic()
         uncertain_game_exit = (
             self.display_scene.current == "game"

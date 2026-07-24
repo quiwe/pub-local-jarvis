@@ -123,7 +123,7 @@ max_frame_bytes = 8388608
 
 [scene]
 display_enter_samples = 2
-game_enter_samples = 1
+game_enter_samples = 2
 display_exit_samples = 2
 game_exit_samples = 1
 game_uncertain_exit_samples = 2

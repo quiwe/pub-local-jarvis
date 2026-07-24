@@ -298,6 +298,7 @@ def test_continuous_perception_generates_barrage_and_course_notes(tmp_path):
             "type": "perception.completed",
             "request_id": 1 << 63,
             "text": '{"scene":"game","confidence":0.94,"barrage":"漂亮的反杀！",'
+            '"scene_evidence":{"game_surface":true,"interactive_gameplay":true},'
             '"course_note":"","course_title":""}',
         }
         client.portal.call(native.emit, game_payload)
@@ -410,6 +411,7 @@ async def test_display_scene_uses_configured_entry_and_exit_samples(tmp_path):
             "scene": scene,
             "confidence": 0.95,
             "scene_evidence": {
+                "game_surface": scene == "game",
                 "interactive_gameplay": scene == "game",
                 "game_video_or_stream": False,
                 "fullscreen_game_media": False,
@@ -427,7 +429,7 @@ async def test_display_scene_uses_configured_entry_and_exit_samples(tmp_path):
     assert await perceive("other") == "other"
 
 
-async def test_default_game_scene_switches_quickly_on_clear_evidence(tmp_path):
+async def test_default_game_scene_requires_two_clear_samples(tmp_path):
     settings = Settings(
         memory=MemorySettings(root=tmp_path / "memory"),
         courses=CourseSettings(sessions_root=tmp_path / "sessions"),
@@ -443,6 +445,7 @@ async def test_default_game_scene_switches_quickly_on_clear_evidence(tmp_path):
                         "scene": scene,
                         "confidence": 0.95,
                         "scene_evidence": {
+                            "game_surface": scene == "game",
                             "interactive_gameplay": scene == "game",
                             "non_game_surface": non_game_surface,
                         },
@@ -454,6 +457,7 @@ async def test_default_game_scene_switches_quickly_on_clear_evidence(tmp_path):
         )
         return orchestrator.events.history("perception.completed")[-1].payload["scene"]
 
+    assert await perceive("game") == "other"
     assert await perceive("game") == "game"
     assert await perceive("other", non_game_surface=True) == "other"
 
@@ -486,8 +490,57 @@ def test_non_game_launcher_evidence_cannot_enter_game_scene():
     assert result["barrage_candidates"] == []
 
 
+async def test_game_surface_without_strong_entry_evidence_stays_other(tmp_path):
+    settings = Settings(
+        scene=SceneSettings(game_enter_samples=1),
+        memory=MemorySettings(root=tmp_path / "memory"),
+        courses=CourseSettings(sessions_root=tmp_path / "sessions"),
+    )
+    orchestrator = create_app(settings=settings).state.orchestrator
+    payload = {
+        "scene": "game",
+        "confidence": 0.96,
+        "scene_evidence": {
+            "game_surface": True,
+            "interactive_gameplay": False,
+            "game_video_or_stream": False,
+            "fullscreen_game_media": False,
+        },
+        "observation": "窗口中显示静止的游戏风格场景和状态栏",
+        "barrage_candidates": ["这局面可以继续推进"],
+    }
+
+    async def perceive():
+        await orchestrator._handle_perception(
+            {
+                "type": "perception.completed",
+                "text": json.dumps(payload, ensure_ascii=False),
+            }
+        )
+        return orchestrator.events.history("perception.completed")[-1].payload
+
+    for _ in range(2):
+        completed = await perceive()
+        assert completed["scene"] == "other"
+        assert completed["observed_scene"] == "other"
+        assert completed["game_entry_rejected"] is True
+        assert completed["barrage_candidates"] == []
+    assert orchestrator.events.history("barrage.generated") == []
+
+    orchestrator.display_scene.force("game")
+    completed = await perceive()
+    assert completed["scene"] == "game"
+    assert completed["observed_scene"] == "game"
+    assert completed["game_entry_rejected"] is False
+    assert [
+        event.payload["text"]
+        for event in orchestrator.events.history("barrage.generated")
+    ] == ["这局面可以继续推进"]
+
+
 async def test_game_classification_switches_scene_before_barrage_generation(tmp_path):
     settings = Settings(
+        scene=SceneSettings(game_enter_samples=1),
         memory=MemorySettings(root=tmp_path / "memory"),
         courses=CourseSettings(sessions_root=tmp_path / "sessions"),
     )
@@ -1545,7 +1598,7 @@ def test_perception_keeps_internal_observation_separate_from_bubble_text():
                 },
                 "observation": "回合结束画面仍显示比分板、小地图和游戏 HUD",
             },
-            "game",
+            "other",
         ),
         (
             {

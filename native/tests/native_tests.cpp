@@ -171,12 +171,13 @@ class RecordingRuntime final : public jarvis::IOmniRuntime {
           prompt.find("fullscreen_game_media") != std::string::npos &&
           prompt.find("course_interaction") != std::string::npos &&
           prompt.find("全屏播放的游戏视频") != std::string::npos &&
+          prompt.find("仅有游戏风格画面") != std::string::npos &&
           prompt.find("网页内播放器、攻略搜索或详情页") != std::string::npos &&
           prompt.find("搜索结果、与音频无关的普通网页") != std::string::npos &&
           prompt.find("老师或讲师不需要出现在画面中") != std::string::npos &&
           prompt.find("静态 PPT 或笔记") != std::string::npos &&
           prompt.find("结合两种模态交叉验证") != std::string::npos &&
-          prompt.find("普通主动文本完全由独立的原生全双工会话决定") !=
+          prompt.find("assistant_message 必须是 8 至 40 个汉字") !=
               std::string::npos &&
           prompt.find("barrage_candidates") != std::string::npos &&
           prompt.find("\"observation\":\"\"") <

@@ -409,7 +409,8 @@ void normalize_perception_fields(nlohmann::json& value) {
   ensure_string("barrage_fallback_reason");
 }
 
-std::string validated_scene_for_prompt(const nlohmann::json& value) {
+std::string validated_scene_for_prompt(const nlohmann::json& value,
+                                       std::string_view previous_scene) {
   const auto scene = value["scene"].get<std::string>();
   const auto confidence = value["confidence"].get<double>();
   const auto& evidence = value["scene_evidence"];
@@ -418,10 +419,15 @@ std::string validated_scene_for_prompt(const nlohmann::json& value) {
     const bool game_surface = evidence["game_surface"].get<bool>();
     const bool passive_media = evidence["game_video_or_stream"].get<bool>();
     const bool fullscreen_media = evidence["fullscreen_game_media"].get<bool>();
+    const bool ordinary_browsing = evidence["ordinary_browsing"].get<bool>();
     const bool non_game_surface = evidence["non_game_surface"].get<bool>();
-    if (confidence >= 0.72 && !non_game_surface &&
-        (interactive || (game_surface && !passive_media) ||
-         (passive_media && fullscreen_media))) {
+    const bool strong_entry_evidence =
+        game_surface && (interactive || (passive_media && fullscreen_media));
+    const bool valid_continuation =
+        previous_scene == "game" && game_surface &&
+        (!passive_media || fullscreen_media);
+    if (confidence >= 0.72 && !ordinary_browsing && !non_game_surface &&
+        (strong_entry_evidence || valid_continuation)) {
       return "game";
     }
     return "other";
@@ -452,7 +458,7 @@ constexpr std::string_view kUnifiedPerceptionPrompt = R"(你是本地桌面助�
 
 场景判定：
 - course：必须有持续、明确的教学行为，而不只是出现知识、代码或“教程/课程”等文字。老师或讲师不需要出现在画面中，不得把“没有人像/老师未出镜”作为排除课程的理由。active_instruction 在系统音频中的讲师/旁白正在解释概念、步骤或例题时也应为 true；course_surface 在当前主体是 PPT/幻灯片、讲义、板书、电子或手写课堂笔记、课程播放器、课堂或教学演示时为 true；instructional_audio 仅在系统音频中存在连续授课、概念解释、步骤讲解或例题分析时为 true。应优先核对画面材料与音频讲解的主题、术语、公式或步骤是否一致：一致时，即使画面只有静态 PPT 或笔记，也应判为 course。搜索结果、与音频无关的普通网页/代码/文档、聊天、文件列表、新闻、影视对白、广告、音乐和娱乐视频均是 other。仅当 active_instruction=true 且 course_surface 或 instructional_audio 至少一个为 true 时才能判为 course。
-- game：game_surface 在主体是可辨认的运行中游戏世界、HUD、小地图、比分板、购买或装备界面、暂停或设置菜单、回合结算、死亡或胜负画面时为 true；属于正在运行游戏的全屏菜单也应延续 game。Steam 等游戏启动器、游戏库、商店、下载页、好友列表、启动按钮和桌面图标都不是运行中的游戏，必须设置 game_surface=false、interactive_gameplay=false、non_game_surface=true 并判为 other；不能因出现游戏封面、名称、预告片或“正在运行/启动”文字而判为 game。用户正在操控的实时游戏过程应同时设置 game_surface=true、interactive_gameplay=true 并判为 game；静止对峙、加载过场、回合结束、死亡画面或比分板即使暂时看不到操作，也应结合最近的 game 观察凭 game_surface=true 延续 game，不得仅因此改判 other。全屏播放的游戏视频、直播或回放也可判为 game，但必须同时设置 game_surface=true、game_video_or_stream=true、fullscreen_game_media=true、interactive_gameplay=false；fullscreen_game_media 仅在连续游戏内容几乎占满整个屏幕，浏览器栏、标题区、评论区和播放器框架均不可见时为 true，短暂浮现的播放控件不影响此判断。网页内播放器、攻略搜索或详情页、预告片、带明显标题/评论区/主播版面的观看页面应设置 game_video_or_stream=true、fullscreen_game_media=false 并判为 other。
+- game：game_surface 在主体是可辨认的运行中游戏世界、HUD、小地图、比分板、购买或装备界面、暂停或设置菜单、回合结算、死亡或胜负画面时为 true；属于正在运行游戏的全屏菜单也应延续 game。从非游戏场景首次进入 game 时，必须有 game_surface=true，且同时满足 interactive_gameplay=true，或 game_video_or_stream=true 与 fullscreen_game_media=true；仅有游戏风格画面或 game_surface=true 不足以首次进入 game。Steam 等游戏启动器、游戏库、商店、下载页、好友列表、启动按钮和桌面图标都不是运行中的游戏，必须设置 game_surface=false、interactive_gameplay=false、non_game_surface=true 并判为 other；不能因出现游戏封面、名称、预告片或“正在运行/启动”文字而判为 game。用户正在操控的实时游戏过程应同时设置 game_surface=true、interactive_gameplay=true 并判为 game；静止对峙、加载过场、回合结束、死亡画面或比分板只有在最近已经确认 game 时，才能凭 game_surface=true 延续 game，不得用它们单独开启游戏场景。全屏播放的游戏视频、直播或回放也可判为 game，但必须同时设置 game_surface=true、game_video_or_stream=true、fullscreen_game_media=true、interactive_gameplay=false；fullscreen_game_media 仅在连续游戏内容几乎占满整个屏幕，浏览器栏、标题区、评论区和播放器框架均不可见时为 true，短暂浮现的播放控件不影响此判断。网页内播放器、攻略搜索或详情页、预告片、带明显标题/评论区/主播版面的观看页面应设置 game_video_or_stream=true、fullscreen_game_media=false 并判为 other。
 - other：其余桌面、网页、工作和娱乐内容。
 
 scene_evidence 必须逐项判断 game_surface、interactive_gameplay、game_video_or_stream、fullscreen_game_media、active_instruction、course_surface、instructional_audio、ordinary_browsing、non_game_surface，但 JSON 对象中只输出值为 true 的键，值为 false 的键必须省略，全部为 false 时输出 {}。不得为迎合 scene 而反推。ordinary_browsing 在主体是浏览器搜索、信息流、文章、商品、论坛或普通网页操作时为 true；浏览器中的课程播放器、与授课音频一致的 PPT/讲义/课堂笔记和实时云游戏除外。non_game_surface 仅在当前主体明确是桌面、文件管理器、编辑器、聊天或办公应用、非游戏网页、启动器或商店时为 true；纯黑帧、模糊帧、加载画面或信息不足时必须为 false。最近观察连续为 game 且当前没有明确 non_game_surface 时，应优先保持 game 并仔细寻找 HUD、游戏菜单或回合状态证据，不能仅因当前动作不明显就退出。不要仅凭静态 PPT 或笔记判课，也不要仅凭有人连续说话判课；需要识别其是否确实在教学，并结合两种模态交叉验证。game 置信度低于 0.72、course 置信度低于 0.78 时改判 other。
@@ -590,7 +596,7 @@ bool Worker::start(const std::string& model_path) {
                 value["keyframe_note"] = "";
               }
               if (normalized_scene != "other") value["assistant_message"] = "";
-              previous_scene_ = validated_scene_for_prompt(value);
+              previous_scene_ = validated_scene_for_prompt(value, previous_scene_);
 
               RecentPerception perception;
               perception.scene = normalized_scene;
