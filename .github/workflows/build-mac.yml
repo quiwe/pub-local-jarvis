@@ -36,6 +36,18 @@ jobs:
         run: npm ci
         working-directory: desktop
 
+      - name: Download and setup vendor source
+        run: |
+          cd third_party/runtime
+          curl -L -o vendor.tar.gz "https://github.com/tc-mb/llama.cpp-omni/archive/b9d15b83ee353b2eaeee4d9318c98a35a1347486.tar.gz"
+          tar -xzf vendor.tar.gz
+          mv llama.cpp-omni-b9d15b83ee353b2eaeee4d9318c98a35a1347486 vendor
+          rm vendor.tar.gz
+          
+          # Apply patch
+          cd vendor
+          patch -p1 < ../patches/0001-text-input-runtime.patch
+
       - name: Build native C++ worker
         run: |
           cmake -S . -B build/native-macos \
