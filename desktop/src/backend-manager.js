@@ -113,29 +113,51 @@ function throwIfCancelled(signal) {
 }
 
 function backendLaunchSpec(backendRoot, useFake, packaged = false) {
+  const isWin = process.platform === "win32";
+  const isMac = process.platform === "darwin";
+
   if (useFake) {
+    if (isWin) {
+      return {
+        executable: path.join(backendRoot, ".venv", "Scripts", "jarvis-backend.exe"),
+        args: [],
+      };
+    }
     return {
-      executable: path.join(backendRoot, ".venv", "Scripts", "jarvis-backend.exe"),
+      executable: path.join(backendRoot, ".venv", "bin", "jarvis-backend"),
       args: [],
     };
   }
   if (packaged) {
+    if (isWin) {
+      return {
+        executable: path.join(backendRoot, "runtime", "jarvis-launcher.exe"),
+        args: [],
+      };
+    }
     return {
-      executable: path.join(backendRoot, "runtime", "jarvis-launcher.exe"),
+      executable: path.join(backendRoot, "runtime", "jarvis-launcher"),
       args: [],
     };
   }
+  if (isWin) {
+    return {
+      executable: "powershell.exe",
+      args: [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        path.join(backendRoot, "start-real.ps1"),
+        "-SkipSmokeTest",
+      ],
+    };
+  }
+  // macOS/Linux: use shell script
   return {
-    executable: "powershell.exe",
-    args: [
-      "-NoLogo",
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      path.join(backendRoot, "start-real.ps1"),
-      "-SkipSmokeTest",
-    ],
+    executable: "bash",
+    args: [path.join(backendRoot, "start-real.sh"), "--skip-smoke-test"],
   };
 }
 
@@ -149,9 +171,12 @@ class BackendManager extends EventEmitter {
     this.preferredPort = options.preferredPort || DEFAULT_PACKAGED_PORT;
     this.baseUrl = options.baseUrl || `http://127.0.0.1:${this.packaged ? this.preferredPort : 8000}`;
     this.portSelector = options.portSelector || selectAvailablePort;
-    this.pipeNameFactory = options.pipeNameFactory || (() => (
-      `\\\\.\\pipe\\AIJarvis.Worker.${process.pid}.${randomUUID()}`
-    ));
+    this.pipeNameFactory = options.pipeNameFactory || (() => {
+      if (process.platform === "win32") {
+        return `\\\\.\\pipe\\AIJarvis.Worker.${process.pid}.${randomUUID()}`;
+      }
+      return `/tmp/AIJarvis.Worker.${process.pid}.${randomUUID()}.sock`;
+    });
     this.pipeName = null;
     this.child = null;
     this.childError = null;

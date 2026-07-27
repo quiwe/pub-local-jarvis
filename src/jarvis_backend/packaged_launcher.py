@@ -28,7 +28,9 @@ from jarvis_backend.model_download import (
 from jarvis_backend.settings import Settings, get_settings
 
 DEFAULT_SERVER_PORT = 31847
-DEFAULT_PIPE_NAME = r"\\.\pipe\AIJarvis.Worker.v1"
+DEFAULT_PIPE_NAME = (
+    r"\\.\pipe\AIJarvis.Worker.v1" if os.name == "nt" else "/tmp/AIJarvis.Worker.sock"
+)
 MINIMUM_FREE_BYTES = 8 * 1024**3
 
 
@@ -77,10 +79,16 @@ def _data_root() -> Path:
     configured = os.getenv("JARVIS_DATA_ROOT")
     if configured:
         return Path(configured).expanduser().resolve()
-    local_app_data = os.getenv("LOCALAPPDATA")
-    if not local_app_data:
-        raise RuntimeError("LOCALAPPDATA is unavailable; cannot select a writable data folder")
-    return (Path(local_app_data) / "AIJarvis").resolve()
+    if os.name == "nt":
+        local_app_data = os.getenv("LOCALAPPDATA")
+        if not local_app_data:
+            raise RuntimeError("LOCALAPPDATA is unavailable; cannot select a writable data folder")
+        return (Path(local_app_data) / "AIJarvis").resolve()
+    # macOS: ~/Library/Application Support/AIJarvis
+    # Linux: ~/.local/share/AIJarvis
+    if sys.platform == "darwin":
+        return (Path.home() / "Library" / "Application Support" / "AIJarvis").resolve()
+    return (Path.home() / ".local" / "share" / "AIJarvis").resolve()
 
 
 def _model_root(data_root: Path) -> Path:
@@ -160,7 +168,11 @@ def _server_port() -> int:
 
 def _pipe_name() -> str:
     value = os.getenv("JARVIS_PIPE_NAME", "").strip()
-    return value or rf"\\.\pipe\AIJarvis.Worker.{os.getpid()}"
+    if value:
+        return value
+    if os.name == "nt":
+        return rf"\\.\pipe\AIJarvis.Worker.{os.getpid()}"
+    return f"/tmp/AIJarvis.Worker.{os.getpid()}.sock"
 
 
 def _ensure_models(model_root: Path) -> None:
@@ -203,15 +215,35 @@ def _wait_for_pipe(
     pipe_name: str,
     timeout_seconds: float = 600,
 ) -> None:
-    wait_named_pipe = ctypes.windll.kernel32.WaitNamedPipeW
-    wait_named_pipe.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32]
     deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        if worker.poll() is not None:
-            raise RuntimeError(f"原生推理进程启动失败，退出代码 {worker.returncode}")
-        if wait_named_pipe(pipe_name, 1000):
-            return
-        time.sleep(0.1)
+
+    if os.name == "nt":
+        wait_named_pipe = ctypes.windll.kernel32.WaitNamedPipeW
+        wait_named_pipe.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32]
+        while time.monotonic() < deadline:
+            if worker.poll() is not None:
+                raise RuntimeError(f"原生推理进程启动失败，退出代码 {worker.returncode}")
+            if wait_named_pipe(pipe_name, 1000):
+                return
+            time.sleep(0.1)
+    else:
+        # Unix domain socket: poll for socket file existence and connectability
+        import socket as _socket
+
+        while time.monotonic() < deadline:
+            if worker.poll() is not None:
+                raise RuntimeError(f"原生推理进程启动失败，退出代码 {worker.returncode}")
+            if Path(pipe_name).exists():
+                try:
+                    sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+                    sock.settimeout(1.0)
+                    sock.connect(pipe_name)
+                    sock.close()
+                    return
+                except (ConnectionRefusedError, FileNotFoundError, OSError):
+                    pass
+            time.sleep(0.2)
+
     raise RuntimeError("原生推理进程未能在 10 分钟内完成初始化")
 
 
@@ -230,18 +262,25 @@ def worker_candidates(
     *,
     nvidia_available: bool | None = None,
 ) -> list[tuple[str, Path]]:
-    cpu_worker = runtime_root / "jarvis-native-worker-cpu.exe"
-    cuda_worker = runtime_root / "jarvis-native-worker-cuda.exe"
-    legacy_worker = runtime_root / "jarvis-native-worker.exe"
-    resolved_cpu = cpu_worker if cpu_worker.is_file() else legacy_worker
-    has_nvidia = _has_nvidia_driver() if nvidia_available is None else nvidia_available
+    if os.name == "nt":
+        cpu_worker = runtime_root / "jarvis-native-worker-cpu.exe"
+        cuda_worker = runtime_root / "jarvis-native-worker-cuda.exe"
+        legacy_worker = runtime_root / "jarvis-native-worker.exe"
+        resolved_cpu = cpu_worker if cpu_worker.is_file() else legacy_worker
+        has_nvidia = _has_nvidia_driver() if nvidia_available is None else nvidia_available
 
-    candidates: list[tuple[str, Path]] = []
-    if has_nvidia and cuda_worker.is_file():
-        candidates.append(("cuda", cuda_worker))
-    if resolved_cpu.is_file():
-        candidates.append(("cpu", resolved_cpu))
-    return candidates
+        candidates: list[tuple[str, Path]] = []
+        if has_nvidia and cuda_worker.is_file():
+            candidates.append(("cuda", cuda_worker))
+        if resolved_cpu.is_file():
+            candidates.append(("cpu", resolved_cpu))
+        return candidates
+    else:
+        # macOS/Linux: single worker binary, Metal/CPU auto-detected by llama.cpp
+        worker = runtime_root / "jarvis-native-worker"
+        if worker.is_file():
+            return [("metal", worker)]
+        return []
 
 
 def _start_native_worker(
@@ -257,32 +296,40 @@ def _start_native_worker(
     for backend, worker_path in candidates:
         if backend == "cuda":
             _progress("检测到 NVIDIA 显卡，正在尝试 CUDA 加速")
+        elif backend == "metal":
+            _progress("正在使用 Apple Metal 加速")
         worker_environment = dict(environment)
         reference_audio = worker_path.parent / "default_ref_audio.wav"
         if reference_audio.is_file():
             worker_environment["JARVIS_REF_AUDIO_PATH"] = str(reference_audio.resolve())
-        worker = subprocess.Popen(
-            [str(worker_path), pipe_name, str(model_root)],
+        popen_kwargs: dict = dict(
             cwd=data_root,
             env=worker_environment,
             stdout=worker_log,
             stderr=subprocess.STDOUT,
-            creationflags=creation_flags,
+        )
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = creation_flags
+        worker = subprocess.Popen(
+            [str(worker_path), pipe_name, str(model_root)],
+            **popen_kwargs,
         )
         try:
             _wait_for_pipe(worker, pipe_name)
         except Exception as exc:
             _terminate(worker)
-            if backend != "cuda":
+            if backend not in ("cuda", "metal"):
                 raise
             cuda_failure = str(exc)
-            _progress(f"CUDA 加速启动失败，正在自动切换到 CPU：{cuda_failure}")
+            _progress(f"{backend.upper()} 加速启动失败，正在自动切换到 CPU：{cuda_failure}")
             continue
 
         if backend == "cuda":
             _runtime_backend_progress("cuda", "NVIDIA CUDA 加速已启用")
+        elif backend == "metal":
+            _runtime_backend_progress("metal", "Apple Metal 加速已启用")
         else:
-            reason = cuda_failure or "未检测到可用的 NVIDIA CUDA 运行环境"
+            reason = cuda_failure or "未检测到可用的加速运行环境"
             _runtime_backend_progress(
                 "cpu",
                 "当前模型正在使用 CPU，推理体验会明显下降。",
@@ -317,10 +364,15 @@ def _serve(config_path: Path) -> int:
 
 def _self_test() -> int:
     runtime_root = _runtime_root()
-    required = [
-        runtime_root / "jarvis-native-worker-cpu.exe",
-        runtime_root / "jarvis-native-worker-cuda.exe",
-    ]
+    if os.name == "nt":
+        required = [
+            runtime_root / "jarvis-native-worker-cpu.exe",
+            runtime_root / "jarvis-native-worker-cuda.exe",
+        ]
+    else:
+        required = [
+            runtime_root / "jarvis-native-worker",
+        ]
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise RuntimeError(f"安装包运行时不完整：{', '.join(missing)}")
@@ -356,7 +408,7 @@ def _launch() -> int:
     pipe_name = _pipe_name()
     environment = os.environ.copy()
     environment["PATH"] = f"{runtime_root}{os.pathsep}{environment.get('PATH', '')}"
-    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
     worker_log = (runtime_data / "native-worker.log").open("ab")
     worker: subprocess.Popen[bytes] | None = None
     backend: subprocess.Popen[bytes] | None = None
@@ -376,11 +428,15 @@ def _launch() -> int:
             build_runtime_config(data_root, worker_path, model_root, server_port, pipe_name),
             encoding="utf-8",
         )
-        backend = subprocess.Popen(
-            [sys.executable, "--serve", str(config_path)],
+        backend_popen_kwargs: dict = dict(
             cwd=data_root,
             env=environment,
-            creationflags=creation_flags,
+        )
+        if os.name == "nt":
+            backend_popen_kwargs["creationflags"] = creation_flags
+        backend = subprocess.Popen(
+            [sys.executable, "--serve", str(config_path)],
+            **backend_popen_kwargs,
         )
         _progress("本地服务已启动")
         while worker.poll() is None and backend.poll() is None:

@@ -1,0 +1,88 @@
+name: Build macOS DMG
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install npm dependencies
+        run: npm ci
+        working-directory: desktop
+
+      - name: Build native C++ worker
+        run: |
+          cmake -S . -B build/native-macos \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_METAL=ON \
+            -DGGML_CUDA=OFF \
+            -DJARVIS_RUNTIME_ENABLE_UPSTREAM=ON
+          cmake --build build/native-macos --config Release --parallel
+
+      - name: Prepare runtime directory
+        run: |
+          mkdir -p desktop/build/runtime
+          cp build/native-macos/native/jarvis-native-worker desktop/build/runtime/
+          chmod +x desktop/build/runtime/jarvis-native-worker
+          if [ -f build/native-macos/default_ref_audio.wav ]; then
+            cp build/native-macos/default_ref_audio.wav desktop/build/runtime/
+          fi
+
+      - name: Setup Python venv and install dependencies
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e ".[packaging]"
+
+      - name: Build Python backend with PyInstaller
+        run: |
+          .venv/bin/python -m PyInstaller \
+            --name jarvis-launcher \
+            --distpath desktop/build/runtime \
+            --workpath build/native-macos/pyinstaller-work \
+            --specpath build/native-macos \
+            --onedir \
+            --noconfirm \
+            --clean \
+            --paths src \
+            --hidden-import jarvis_backend \
+            --hidden-import jarvis_backend.app \
+            --hidden-import jarvis_backend.packaged_launcher \
+            --hidden-import jarvis_backend.model_download \
+            --hidden-import jarvis_backend.native.unix_client \
+            src/jarvis_backend/packaged_launcher.py
+
+      - name: Build Electron DMG
+        run: npx electron-builder --mac --arm64
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-Jarvis-macOS-DMG
+          path: desktop/dist/*.dmg
+          retention-days: 30

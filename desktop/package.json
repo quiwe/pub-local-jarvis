@@ -15,6 +15,7 @@
     "assets:memory-references": "electron test/generate-memory-reference-assets.js",
     "deps:install": "node scripts/install-dependencies.js",
     "build": "node scripts/build.js",
+    "build:mac": "node scripts/build-mac.js",
     "verify:installer": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/verify-installer.ps1"
   },
   "dependencies": {
@@ -58,6 +59,31 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "AI Jarvis"
-    }
+    },
+    "mac": {
+      "icon": "assets/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "title": "AI Jarvis ${version}",
+      "icon": "assets/icon.icns",
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ],
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
+    "afterSign": "scripts/notarize.js"
   }
 }

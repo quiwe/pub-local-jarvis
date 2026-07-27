@@ -19,6 +19,9 @@
 #ifdef _WIN32
 #include <Windows.h>
 #endif
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 
 namespace jarvis {
 namespace {
@@ -29,9 +32,10 @@ constexpr std::size_t kRecentPerceptionLimit = 3;
 constexpr std::size_t kGameProfileHeadBytes = 1800;
 constexpr std::size_t kGameProfileTailBytes = 900;
 constexpr std::string_view kTextOnlyPrefix = "[[JARVIS_TEXT_ONLY]]\n";
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
 constexpr std::uint32_t kDuplexRecycleCompletedFrames = 24;
 #endif
+
 #ifdef _WIN32
 bool is_game_launcher_window(std::uintptr_t window_value) noexcept {
   const auto window = reinterpret_cast<HWND>(window_value);
@@ -53,7 +57,12 @@ bool is_game_launcher_window(std::uintptr_t window_value) noexcept {
                          [](wchar_t value) { return std::towlower(value); });
   return executable == L"steam.exe" || executable == L"steamwebhelper.exe";
 }
+
+std::uintptr_t get_foreground_window_id() noexcept {
+  return reinterpret_cast<std::uintptr_t>(GetForegroundWindow());
+}
 #endif
+// macOS implementation is in macos/foreground_window.mm
 
 bool has_audible_signal(const std::vector<float>& samples) noexcept {
   if (samples.empty()) return false;
@@ -493,11 +502,10 @@ bool Worker::start(const std::string& model_path) {
       bool discard_stale_perception = false;
       {
         std::lock_guard callback_lock(mutex_);
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
         if (r.id == active_perception_id_) {
           const auto perception_window = active_perception_window_;
-          const auto foreground_window =
-              reinterpret_cast<std::uintptr_t>(GetForegroundWindow());
+          const auto foreground_window = get_foreground_window_id();
           const bool foreground_changed =
               active_perception_window_ != 0 && foreground_window != 0 &&
               active_perception_window_ != foreground_window;
@@ -637,7 +645,7 @@ bool Worker::start(const std::string& model_path) {
   } catch (...) { state_ = WorkerState::faulted; return false; }
 }
 void Worker::stop() noexcept {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
   stop_monitoring();
 #endif
   std::unique_ptr<LatestOnlyScheduler> scheduler;
@@ -657,7 +665,7 @@ void Worker::submit_prompt(std::uint64_t request_id, std::string prompt) {
   const bool text_only = prompt.starts_with(kTextOnlyPrefix);
   if (text_only) prompt.erase(0, kTextOnlyPrefix.size());
   InferenceRequest request{.id=request_id, .prompt=std::move(prompt)};
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
   if (!text_only) {
     request.frame = latest_frame_;
     request.audio_16khz_mono = latest_audio_;
@@ -672,7 +680,7 @@ void Worker::set_game_profile(std::string name, std::string prompt) {
   game_profile_prompt_ = std::move(prompt);
   recent_perceptions_.clear();
 }
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
 bool Worker::start_duplex(std::string session_id, std::string instruction) {
   if (session_id.empty() || instruction.empty() || instruction.size() > 8000 ||
       instruction.find('\0') != std::string::npos || !capture_thread_.joinable()) return false;
@@ -927,8 +935,7 @@ bool Worker::start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
             frame = std::make_shared<VideoFrame>(std::move(*captured));
           }
         }
-        const auto foreground_window =
-            reinterpret_cast<std::uintptr_t>(GetForegroundWindow());
+        const auto foreground_window = get_foreground_window_id();
         bool foreground_changed = false;
         {
           std::lock_guard lock(mutex_);

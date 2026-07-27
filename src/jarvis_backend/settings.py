@@ -15,11 +15,23 @@ class ServerSettings(BaseModel):
     bearer_token: str | None = None
 
 
+def _default_pipe_name() -> str:
+    if os.name == "nt":
+        return r"\\.\pipe\AIJarvis.Worker.v1"
+    return "/tmp/AIJarvis.Worker.sock"
+
+
+def _default_worker_path() -> Path:
+    if os.name == "nt":
+        return Path("build/native/Release/jarvis-native-worker.exe")
+    return Path("build/native/jarvis-native-worker")
+
+
 class NativeSettings(BaseModel):
     mode: Literal["fake", "process"] = "fake"
     protocol_version: int = Field(default=1, ge=1, le=255)
-    pipe_name: str = r"\\.\pipe\AIJarvis.Worker.v1"
-    worker_path: Path = Path("build/native/Release/jarvis-native-worker.exe")
+    pipe_name: str = Field(default_factory=_default_pipe_name)
+    worker_path: Path = Field(default_factory=_default_worker_path)
     model_path: Path = Path("models/MiniCPM-o-4_5-gguf")
     request_timeout_seconds: float = Field(default=5.0, gt=0)
     heartbeat_interval_seconds: float = Field(default=10.0, gt=0)

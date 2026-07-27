@@ -121,10 +121,13 @@ function backendRoot() {
 
 function backendDataRoot() {
   if (process.env.JARVIS_DATA_ROOT) return path.resolve(process.env.JARVIS_DATA_ROOT);
-  const localAppData = process.env.LOCALAPPDATA;
-  return localAppData
-    ? path.join(localAppData, "AIJarvis")
-    : path.join(app.getPath("userData"), "backend-data");
+  if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA;
+    if (localAppData) return path.join(localAppData, "AIJarvis");
+  }
+  // macOS: ~/Library/Application Support/AIJarvis
+  // Linux: ~/.config/AIJarvis
+  return path.join(app.getPath("userData"), "AIJarvis");
 }
 
 function send(window, channel, payload) {

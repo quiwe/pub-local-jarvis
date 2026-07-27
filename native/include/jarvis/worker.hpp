@@ -29,7 +29,7 @@ class Worker {
   void submit_prompt(std::uint64_t request_id, std::string prompt);
   void cancel(std::uint64_t request_id) noexcept;
   void set_game_profile(std::string name, std::string prompt);
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
   bool start_duplex(std::string session_id, std::string instruction);
   void stop_duplex() noexcept;
   bool start_monitoring(std::unique_ptr<IDesktopCapture> desktop,
@@ -44,7 +44,7 @@ class Worker {
   std::unique_ptr<IOmniRuntime> runtime_;
   std::unique_ptr<LatestOnlyScheduler> scheduler_;
   LatestOnlyScheduler::Completion completion_{};
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
   struct RecentPerception {
     std::string scene;
     std::string observation;
@@ -85,5 +85,9 @@ class Worker {
   mutable std::mutex mutex_{};
   std::atomic<WorkerState> state_{WorkerState::stopped};
 };
+
+// Cross-platform foreground window helpers
+[[nodiscard]] std::uintptr_t get_foreground_window_id() noexcept;
+[[nodiscard]] bool is_game_launcher_window(std::uintptr_t window_value) noexcept;
 
 } // namespace jarvis

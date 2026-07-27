@@ -7,6 +7,8 @@ import uvicorn
 from fastapi import FastAPI
 
 from jarvis_backend.api import api_router, websocket_router
+import os
+
 from jarvis_backend.native import InProcessNativeClient, NamedPipeNativeClient, NativeClient
 from jarvis_backend.orchestrator import OrchestrationService
 from jarvis_backend.settings import Settings, get_settings
@@ -17,14 +19,22 @@ def create_app(
     native_client: NativeClient | None = None,
 ) -> FastAPI:
     config = settings or get_settings()
-    client = native_client or (
-        InProcessNativeClient()
-        if config.native.mode == "fake"
-        else NamedPipeNativeClient(
+    if native_client is not None:
+        client = native_client
+    elif config.native.mode == "fake":
+        client = InProcessNativeClient()
+    elif os.name == "nt":
+        client = NamedPipeNativeClient(
             config.native.pipe_name,
             timeout=config.native.request_timeout_seconds,
         )
-    )
+    else:
+        from jarvis_backend.native import UnixSocketNativeClient
+
+        client = UnixSocketNativeClient(
+            config.native.pipe_name,
+            timeout=config.native.request_timeout_seconds,
+        )
     orchestrator = OrchestrationService(config, client)
 
     @asynccontextmanager

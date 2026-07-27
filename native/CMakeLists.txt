@@ -52,6 +52,54 @@ if(WIN32)
   endif()
 endif()
 
+if(APPLE)
+  add_library(jarvis_worker_mac STATIC
+    src/unix/unix_socket_server.cpp
+    src/macos/screen_capture.mm
+    src/macos/audio_capture.mm
+    src/macos/foreground_window.mm
+  )
+  target_include_directories(jarvis_worker_mac PUBLIC include)
+  target_compile_features(jarvis_worker_mac PUBLIC cxx_std_20)
+  target_link_libraries(jarvis_worker_mac PUBLIC jarvis_worker_core)
+
+  # Link macOS frameworks
+  find_library(COCOA_FRAMEWORK Cocoa)
+  find_library(COREMEDIA_FRAMEWORK CoreMedia)
+  find_library(COREVIDEO_FRAMEWORK CoreVideo)
+  find_library(COREAUDIO_FRAMEWORK CoreAudio)
+  find_library(AVFOUNDATION_FRAMEWORK AVFoundation)
+  find_library(SCREENCAPTURE_FRAMEWORK ScreenCaptureKit)
+  find_library(APPKIT_FRAMEWORK AppKit)
+  find_library(QUARTZCORE_FRAMEWORK QuartzCore)
+  find_library(AUDIOTOOLBOX_FRAMEWORK AudioToolbox)
+  target_link_libraries(jarvis_worker_mac PUBLIC
+    ${COCOA_FRAMEWORK}
+    ${COREMEDIA_FRAMEWORK}
+    ${COREVIDEO_FRAMEWORK}
+    ${COREAUDIO_FRAMEWORK}
+    ${AVFOUNDATION_FRAMEWORK}
+    ${APPKIT_FRAMEWORK}
+    ${QUARTZCORE_FRAMEWORK}
+    ${AUDIOTOOLBOX_FRAMEWORK}
+  )
+  if(SCREENCAPTURE_FRAMEWORK)
+    target_link_libraries(jarvis_worker_mac PUBLIC ${SCREENCAPTURE_FRAMEWORK})
+    target_compile_definitions(jarvis_worker_mac PRIVATE JARVIS_HAS_SCREENCAPTUREKIT=1)
+  endif()
+
+  add_executable(jarvis-native-worker src/main_unix.cpp)
+  target_link_libraries(jarvis-native-worker PRIVATE jarvis_worker_mac)
+  if(JARVIS_ENABLE_STUB_RUNTIME)
+    target_compile_definitions(jarvis-native-worker PRIVATE JARVIS_ENABLE_STUB_RUNTIME=1)
+  elseif(TARGET jarvis::runtime_provider)
+    target_compile_definitions(jarvis-native-worker PRIVATE JARVIS_HAS_REAL_RUNTIME=1)
+  else()
+    message(FATAL_ERROR
+      "Production worker requires jarvis::runtime_provider; configure JARVIS_RUNTIME_ENABLE_UPSTREAM=ON")
+  endif()
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
   add_executable(jarvis-native-tests tests/native_tests.cpp)
