@@ -12,7 +12,7 @@ permissions:
 jobs:
   build-macos:
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Checkout code
@@ -57,7 +57,7 @@ jobs:
             -DJARVIS_RUNTIME_ENABLE_UPSTREAM=ON \
             -DLLAMA_BUILD_COMMON=ON \
             -DLLAMA_BUILD_TOOLS=ON
-          cmake --build build/native-macos --config Release --parallel
+          cmake --build build/native-macos --config Release --parallel --target jarvis-native-worker
 
       - name: Prepare runtime directory
         run: |
