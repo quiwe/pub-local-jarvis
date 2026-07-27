@@ -43,10 +43,6 @@ jobs:
           tar -xzf vendor.tar.gz
           mv llama.cpp-omni-b9d15b83ee353b2eaeee4d9318c98a35a1347486 vendor
           rm vendor.tar.gz
-          
-          # Apply patch
-          cd vendor
-          patch -p1 < ../patches/0001-text-input-runtime.patch
 
       - name: Build native C++ worker
         run: |

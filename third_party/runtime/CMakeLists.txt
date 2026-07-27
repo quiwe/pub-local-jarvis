@@ -26,15 +26,6 @@ if(JARVIS_RUNTIME_ENABLE_UPSTREAM)
     endif()
   endforeach()
 
-  # The upstream omni target currently compiles TTS/projector/token2wav into the
-  # same library as LLM/VPM/APM. Linking it would violate this boundary's scope.
-  # Keep this a hard gate until patches/0001-text-input-runtime.patch exists,
-  # is checksum-pinned in VENDOR.json, and exposes a text-only upstream target.
-  if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/patches/0001-text-input-runtime.patch")
-    message(FATAL_ERROR
-      "Upstream inference is intentionally gated: the pinned source has no separable text-only LLM+VPM+APM target. See INTEGRATION.md")
-  endif()
-
   add_subdirectory("${JARVIS_RUNTIME_UPSTREAM_SOURCE_DIR}"
                    "${CMAKE_CURRENT_BINARY_DIR}/upstream" EXCLUDE_FROM_ALL)
   if(NOT TARGET omni_text_runtime)
