@@ -58,3 +58,4 @@ others/
 .agents/
 .claude/
 .codegraph
+third_party/runtime/vendor/
