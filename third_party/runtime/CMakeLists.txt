@@ -29,7 +29,7 @@ if(JARVIS_RUNTIME_ENABLE_UPSTREAM)
   add_subdirectory("${JARVIS_RUNTIME_UPSTREAM_SOURCE_DIR}"
                    "${CMAKE_CURRENT_BINARY_DIR}/upstream" EXCLUDE_FROM_ALL)
   if(NOT TARGET omni_text_runtime)
-    message(FATAL_ERROR "Pinned patch contract requires target omni_text_runtime")
+    message(FATAL_ERROR "Upstream source does not have omni_text_runtime target")
   endif()
   add_library(jarvis_runtime_provider INTERFACE)
   add_library(jarvis::runtime_provider ALIAS jarvis_runtime_provider)
