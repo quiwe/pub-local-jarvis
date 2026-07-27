@@ -2,6 +2,10 @@
   "name": "aijarvis-desktop",
   "version": "0.1.2",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/quiwe/pub-local-jarvis.git"
+  },
   "description": "Thin Electron desktop companion for the AI Jarvis backend",
   "author": "AI Jarvis Contributors",
   "license": "MIT",
