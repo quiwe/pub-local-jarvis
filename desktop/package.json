@@ -45,6 +45,14 @@
         "to": "backend/runtime"
       },
       {
+        "from": "build/runtime/jarvis-native-worker",
+        "to": "backend/runtime/jarvis-native-worker"
+      },
+      {
+        "from": "build/runtime/default_ref_audio.wav",
+        "to": "backend/runtime/default_ref_audio.wav"
+      },
+      {
         "from": "../LICENSE",
         "to": "licenses/AI-Jarvis-LICENSE.txt"
       },
@@ -69,7 +77,9 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["arm64"]
+          "arch": [
+            "arm64"
+          ]
         }
       ],
       "category": "public.app-category.productivity",
@@ -80,8 +90,16 @@
       "title": "AI Jarvis ${version}",
       "icon": "assets/icon.icns",
       "contents": [
-        { "x": 130, "y": 220 },
-        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
       ],
       "window": {
         "width": 540,
