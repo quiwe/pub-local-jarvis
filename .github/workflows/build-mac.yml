@@ -54,7 +54,9 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DGGML_METAL=ON \
             -DGGML_CUDA=OFF \
-            -DJARVIS_RUNTIME_ENABLE_UPSTREAM=ON
+            -DJARVIS_RUNTIME_ENABLE_UPSTREAM=ON \
+            -DLLAMA_BUILD_COMMON=ON \
+            -DLLAMA_BUILD_TOOLS=ON
           cmake --build build/native-macos --config Release --parallel
 
       - name: Prepare runtime directory
